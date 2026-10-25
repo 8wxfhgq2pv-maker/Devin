@@ -19,8 +19,6 @@ export interface OpenClawStatus {
   serverVersion?: string;
   /** Safe, actionable diagnostic. Never contains credentials. */
   message?: string;
-  targetAgentId?: string;
-  targetSessionId?: string;
 }
 
 export interface OpenClawChatMessage {
@@ -63,8 +61,6 @@ export class OpenClawNotImplementedError extends Error {
 export interface OpenClawClientConfig {
   url?: string;
   token?: string;
-  agentId?: string;
-  sessionId?: string;
 }
 
 /** Strips userinfo, query string and fragment so credentials are never echoed back. */
@@ -94,8 +90,6 @@ export class PlaceholderOpenClawClient implements OpenClawClient {
       state: configured ? "disconnected" : "not_configured",
       transport: "not_implemented",
       endpoint: redactEndpoint(this.config.url),
-      targetAgentId: this.config.agentId,
-      targetSessionId: this.config.sessionId,
       message: configured
         ? "Gateway URL is configured, but no protocol client is active yet."
         : "Set OPENCLAW_URL to configure a Gateway. Connection protocol is not implemented yet.",

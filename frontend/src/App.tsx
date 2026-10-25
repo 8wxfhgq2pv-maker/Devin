@@ -49,6 +49,8 @@ export default function App() {
   const [listening, setListening] = useState(false);
   const [readAloud, setReadAloud] = useState(() => localStorage.getItem("devin.voice.readAloud") === "true");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
   const active = sessions.find((session) => session.key === activeKey);
   const filtered = useMemo(() => sessions.filter((session) => session.title.toLowerCase().includes(query.toLowerCase())), [sessions, query]);
 
@@ -106,9 +108,14 @@ export default function App() {
 
   const loadHistory = useCallback(async (key: string) => {
     setLoadingHistory(true);
-    try { setMessages(await api.history(key)); setError(""); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); setMessages([]); }
-    finally { setLoadingHistory(false); }
+    try {
+      const history = await api.history(key);
+      if (activeKeyRef.current === key) { setMessages(history); setError(""); }
+    } catch (err) {
+      if (activeKeyRef.current === key) { setError(err instanceof Error ? err.message : String(err)); setMessages([]); }
+    } finally {
+      if (activeKeyRef.current === key) setLoadingHistory(false);
+    }
   }, []);
 
   const connect = useCallback(async () => {
@@ -161,7 +168,10 @@ export default function App() {
     };
     source.addEventListener("chat", handleChat as EventListener);
     source.addEventListener("connection.closed", () => setStatus((current) => current ? { ...current, state: "disconnected", message: "Gateway 连接已断开。" } : current));
-    source.onerror = () => setStatus((current) => current?.state === "connected" ? { ...current, state: "disconnected", message: "实时连接中断，正在等待重连。" } : current);
+    source.onerror = () => {
+      // EventSource retries transient failures automatically; keep Gateway state connected
+      // so this effect does not close the stream before its retry can succeed.
+    };
     return () => source.close();
   }, [activeKey, status?.state, loadHistory, readAloud, speakText]);
 

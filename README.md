@@ -1,6 +1,6 @@
 # OpenClaw Web UI
 
-面向个人 OpenClaw Gateway 的 Web 控制台基线，采用 React + TypeScript 前端和 Node + Express 后端代理。当前仓库的重点是连接诊断与 Jarvis 目标配置；Gateway 协议客户端尚未实现，页面不会把“配置了地址”误报为“已连接”。
+面向个人 OpenClaw Gateway 的 Web 控制台基线，采用 React + TypeScript 前端和 Node + Express 后端代理。当前仓库的重点是连接诊断；Gateway 协议客户端尚未实现，页面不会把“配置了地址”误报为“已连接”。
 
 ## 目录
 
@@ -15,7 +15,7 @@
 ```bash
 npm install
 cp backend/.env.example backend/.env
-# 编辑 backend/.env，填入 Gateway URL 和可选的 Jarvis 目标 ID
+# 编辑 backend/.env，填入 OpenClaw Gateway URL 和可选凭据
 npm run dev
 ```
 
@@ -28,10 +28,8 @@ npm run dev
 | `PORT` | 后端监听端口，默认 `3001` |
 | `OPENCLAW_URL` | Gateway 地址（支持 http/https/ws/wss URL；连接器实现后使用） |
 | `OPENCLAW_TOKEN` | Gateway 凭据，只保存在后端环境中 |
-| `OPENCLAW_AGENT_ID` | 可选的显式 Jarvis agent ID |
-| `OPENCLAW_SESSION_ID` | 可选的显式 Jarvis session ID |
 
-不要把 Gateway 暴露到公网，也不要把 token 放进前端变量或提交到仓库。Agent/session ID 目前只用于显示目标配置；当前版本尚未能验证它们是否存在，也不会发送消息。
+不要把 Gateway 暴露到公网，也不要把 token 放进前端变量或提交到仓库。
 
 ## 当前功能
 

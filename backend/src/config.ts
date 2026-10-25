@@ -29,5 +29,7 @@ export const config = {
   openclaw: {
     url: optionalUrl(process.env.OPENCLAW_URL, "OPENCLAW_URL"),
     token: process.env.OPENCLAW_TOKEN?.trim() || undefined,
+    password: process.env.OPENCLAW_PASSWORD?.trim() || undefined,
+    statePath: process.env.OPENCLAW_STATE_PATH?.trim() || undefined,
   },
 };

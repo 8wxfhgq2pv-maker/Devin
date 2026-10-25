@@ -117,3 +117,11 @@ kbd { margin-left: auto; color: #777980; font: 11px "DM Sans", sans-serif; }
   .welcome h2 { font-size: 21px; }
   .keyboard-hint { display: none; }
 }
+
+.connection-dot.connected { background: #56c98c; box-shadow: 0 0 0 3px #56c98c20; }
+.connect-button { margin-top: 20px; padding: 10px 16px; border: 1px solid #ba7957; border-radius: 8px; background: #e8946c; color: #211711; cursor: pointer; font-size: 12px; font-weight: 700; }
+.connect-button:disabled { opacity: .55; cursor: wait; }
+.session-key { max-width: 45%; overflow: hidden; color: #74767d; text-overflow: ellipsis; white-space: nowrap; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.streaming-label { color: #e8946c; font-size: 10px; }
+.toast-error { position: absolute; right: 18px; bottom: 94px; left: 18px; z-index: 2; display: flex; justify-content: space-between; gap: 16px; padding: 11px 13px; border: 1px solid #633c38; border-radius: 9px; background: #2a1d1c; color: #f2b6ac; box-shadow: 0 10px 35px #0005; font-size: 11px; line-height: 1.5; }
+.toast-error button { align-self: flex-start; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 16px; }

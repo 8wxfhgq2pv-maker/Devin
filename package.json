@@ -2,7 +2,7 @@
   "name": "openclaw-webui",
   "private": true,
   "version": "0.1.0",
-  "description": "Web UI scaffold for OpenClaw (React + Vite frontend, Express proxy backend)",
+  "description": "Independent OpenClaw chat UI (React + Vite frontend, Gateway WebSocket backend)",
   "workspaces": [
     "frontend",
     "backend"
@@ -13,7 +13,7 @@
     "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.19.0"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

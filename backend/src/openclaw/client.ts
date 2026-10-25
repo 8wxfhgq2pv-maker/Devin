@@ -1,10 +1,8 @@
 /**
  * Transport-agnostic abstraction over the connection to OpenClaw.
  *
- * The concrete protocol is intentionally NOT implemented yet. Candidate
- * transports (Gateway WebSocket RPC, OpenAI-compatible HTTP, CLI) are
- * described in docs/openclaw-research.md; pick one there before filling in
- * an implementation of this interface.
+ * The concrete protocol is intentionally not implemented yet. Candidate
+ * transports and protocol details are described in docs/openclaw-research.md.
  */
 
 export type OpenClawConnectionState =
@@ -16,13 +14,13 @@ export type OpenClawConnectionState =
 
 export interface OpenClawStatus {
   state: OpenClawConnectionState;
-  /** Which implementation is active, e.g. "placeholder". */
   transport: string;
-  /** Remote endpoint, if configured. Never includes credentials. */
   endpoint?: string;
-  /** Server version reported by OpenClaw after connecting, if known. */
   serverVersion?: string;
+  /** Safe, actionable diagnostic. Never contains credentials. */
   message?: string;
+  targetAgentId?: string;
+  targetSessionId?: string;
 }
 
 export interface OpenClawChatMessage {
@@ -31,7 +29,6 @@ export interface OpenClawChatMessage {
 }
 
 export interface OpenClawSendMessageRequest {
-  /** Target conversation/session; semantics depend on the chosen transport. */
   sessionId?: string;
   message: string;
 }
@@ -53,15 +50,12 @@ export interface OpenClawClient {
   disconnect(): Promise<void>;
   getStatus(): OpenClawStatus;
   sendMessage(request: OpenClawSendMessageRequest): Promise<OpenClawSendMessageResult>;
-  /** Subscribe to server-pushed events. Returns an unsubscribe function. */
   onEvent(listener: OpenClawEventListener): () => void;
 }
 
 export class OpenClawNotImplementedError extends Error {
   constructor(operation: string) {
-    super(
-      `OpenClaw ${operation} is not implemented yet: the connection protocol has not been confirmed (see docs/openclaw-research.md).`,
-    );
+    super(`OpenClaw ${operation} is not implemented yet. Configure the Gateway protocol and pairing first (see docs/openclaw-research.md).`);
     this.name = "OpenClawNotImplementedError";
   }
 }
@@ -69,6 +63,8 @@ export class OpenClawNotImplementedError extends Error {
 export interface OpenClawClientConfig {
   url?: string;
   token?: string;
+  agentId?: string;
+  sessionId?: string;
 }
 
 /** Strips userinfo, query string and fragment so credentials are never echoed back. */
@@ -93,11 +89,16 @@ export class PlaceholderOpenClawClient implements OpenClawClient {
   async disconnect(): Promise<void> {}
 
   getStatus(): OpenClawStatus {
+    const configured = Boolean(this.config.url);
     return {
-      state: this.config.url ? "disconnected" : "not_configured",
-      transport: "placeholder",
+      state: configured ? "disconnected" : "not_configured",
+      transport: "not_implemented",
       endpoint: redactEndpoint(this.config.url),
-      message: "Connection logic pending protocol confirmation.",
+      targetAgentId: this.config.agentId,
+      targetSessionId: this.config.sessionId,
+      message: configured
+        ? "Gateway URL is configured, but no protocol client is active yet."
+        : "Set OPENCLAW_URL to configure a Gateway. Connection protocol is not implemented yet.",
     };
   }
 

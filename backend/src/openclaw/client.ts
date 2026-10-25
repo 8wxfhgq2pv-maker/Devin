@@ -71,6 +71,17 @@ export interface OpenClawClientConfig {
   token?: string;
 }
 
+/** Strips userinfo, query string and fragment so credentials are never echoed back. */
+export function redactEndpoint(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+  } catch {
+    return "(invalid URL)";
+  }
+}
+
 /** Placeholder used until the OpenClaw protocol is confirmed. */
 export class PlaceholderOpenClawClient implements OpenClawClient {
   constructor(private readonly config: OpenClawClientConfig) {}
@@ -85,7 +96,7 @@ export class PlaceholderOpenClawClient implements OpenClawClient {
     return {
       state: this.config.url ? "disconnected" : "not_configured",
       transport: "placeholder",
-      endpoint: this.config.url || undefined,
+      endpoint: redactEndpoint(this.config.url),
       message: "Connection logic pending protocol confirmation.",
     };
   }

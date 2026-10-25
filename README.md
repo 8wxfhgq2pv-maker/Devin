@@ -1,54 +1,43 @@
 # OpenClaw Web UI
 
-为 [OpenClaw](https://github.com/openclaw/openclaw) 搭建的 Web UI 脚手架：
+面向个人 OpenClaw Gateway 的 Web 控制台基线，采用 React + TypeScript 前端和 Node + Express 后端代理。当前仓库的重点是连接诊断与 Jarvis 目标配置；Gateway 协议客户端尚未实现，页面不会把“配置了地址”误报为“已连接”。
 
-- `frontend/` — React + TypeScript（Vite）
-- `backend/` — Node + Express，作为与 OpenClaw 通信的代理层
-- `docs/openclaw-research.md` — OpenClaw 接入方式调研，以及**仍需确认的问题**
+## 目录
 
-> 当前阶段尚未实现与 OpenClaw 的实际连接。连接抽象层位于 `backend/src/openclaw/client.ts`，待接入协议确认后再实现。
-
-## 环境要求
-
-- Node.js `^20.19.0 || >=22.12.0`（推荐 22，Vite 8 的要求）
-- npm 10+
+- `frontend/` — React + TypeScript（Vite）控制台
+- `backend/` — Node + Express 代理层，Gateway 凭据只保存在服务端
+- `docs/openclaw-research.md` — Gateway 协议和候选接入方案调研
 
 ## 本地启动
 
+需要 Node.js `^20.19.0 || >=22.12.0` 和 npm 10+。
+
 ```bash
 npm install
-cp backend/.env.example backend/.env   # 可选，按需修改
+cp backend/.env.example backend/.env
+# 编辑 backend/.env，填入 Gateway URL 和可选的 Jarvis 目标 ID
 npm run dev
 ```
 
-- 前端：<http://localhost:5173>（`/api` 请求由 Vite 代理到后端）
-- 后端：<http://localhost:3001>
+前端地址 <http://localhost:5173>，后端地址 <http://localhost:3001>。也可以分别运行 `npm run dev -w backend` 和 `npm run dev -w frontend`。
 
-单独启动：`npm run dev -w backend` / `npm run dev -w frontend`。
+## 环境变量
 
-## 其他脚本
-
-| 命令 | 说明 |
+| 变量 | 用途 |
 | --- | --- |
-| `npm run build` | 构建前后端 |
-| `npm run typecheck` | 前后端 TypeScript 类型检查 |
-| `npm run start -w backend` | 运行构建后的后端 |
+| `PORT` | 后端监听端口，默认 `3001` |
+| `OPENCLAW_URL` | Gateway 地址（支持 http/https/ws/wss URL；连接器实现后使用） |
+| `OPENCLAW_TOKEN` | Gateway 凭据，只保存在后端环境中 |
+| `OPENCLAW_AGENT_ID` | 可选的显式 Jarvis agent ID |
+| `OPENCLAW_SESSION_ID` | 可选的显式 Jarvis session ID |
 
-## 后端 API（占位）
+不要把 Gateway 暴露到公网，也不要把 token 放进前端变量或提交到仓库。Agent/session ID 目前只用于显示目标配置；当前版本尚未能验证它们是否存在，也不会发送消息。
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/api/health` | 后端健康检查 |
-| GET | `/api/openclaw/status` | OpenClaw 连接状态（当前为 `placeholder`） |
-| POST | `/api/openclaw/connect` | 连接 OpenClaw（未实现，返回 501） |
-| POST | `/api/openclaw/messages` | 发送消息 `{ "message": "..." }`（未实现，返回 501） |
+## 当前功能
 
-## 配置
+- 后端健康检查：`GET /api/health`
+- Gateway 状态与脱敏 endpoint：`GET /api/openclaw/status`
+- 占位连接动作：`POST /api/openclaw/connect`（协议未实现时返回明确的 501）
+- 消息请求输入校验：`POST /api/openclaw/messages`（真实传输尚未实现）
 
-`backend/.env`（参考 `backend/.env.example`）：
-
-| 变量 | 说明 |
-| --- | --- |
-| `PORT` | 后端端口，默认 `3001` |
-| `OPENCLAW_URL` | OpenClaw 地址（占位，协议确认前不会使用） |
-| `OPENCLAW_TOKEN` | OpenClaw 凭据（占位，不要提交到仓库） |
+构建与类型检查：`npm run build`、`npm run typecheck`。

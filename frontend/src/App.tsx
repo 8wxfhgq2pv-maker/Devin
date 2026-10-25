@@ -57,9 +57,9 @@ export default function App() {
   return (
     <main className="container">
       <header className="page-header">
-        <p className="eyebrow">PERSONAL ASSISTANT CONSOLE</p>
+        <p className="eyebrow">OPENCLAW CONTROL CONSOLE</p>
         <h1>OpenClaw Web UI</h1>
-        <p className="muted">连接状态与目标配置。Gateway 凭据只应保存在后端环境变量中。</p>
+        <p className="muted">Gateway 连接状态与诊断。访问凭据只应保存在后端环境变量中。</p>
       </header>
 
       <section className="card" aria-labelledby="backend-title">
@@ -85,8 +85,6 @@ export default function App() {
             <dl>
               <dt>连接器</dt><dd>{status.transport}</dd>
               <dt>Gateway 地址</dt><dd>{status.endpoint ?? "尚未配置"}</dd>
-              <dt>Jarvis Agent</dt><dd>{status.targetAgentId ?? "未指定"}</dd>
-              <dt>Jarvis Session</dt><dd>{status.targetSessionId ?? "未指定"}</dd>
               {status.serverVersion && <><dt>Gateway 版本</dt><dd>{status.serverVersion}</dd></>}
             </dl>
             <p className="status-message">{status.message}</p>
@@ -106,8 +104,8 @@ export default function App() {
       </section>
 
       <aside className="notice">
-        <strong>下一步：绑定到 Jarvis</strong>
-        <p>设置 <code>OPENCLAW_AGENT_ID</code> 或 <code>OPENCLAW_SESSION_ID</code> 可记录明确目标；真正发送消息前，仍需完成 Gateway 协议和设备配对实现。</p>
+        <strong>连接功能状态</strong>
+        <p>当前版本已提供连接诊断界面；Gateway 协议客户端与设备配对仍待实现，配置地址并不代表已经建立连接。</p>
       </aside>
 
       {error && <p className="error" role="alert">{error}</p>}

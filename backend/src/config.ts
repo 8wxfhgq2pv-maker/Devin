@@ -29,8 +29,5 @@ export const config = {
   openclaw: {
     url: optionalUrl(process.env.OPENCLAW_URL, "OPENCLAW_URL"),
     token: process.env.OPENCLAW_TOKEN?.trim() || undefined,
-    // Keep Jarvis targeting explicit; do not silently fall back to a default agent.
-    agentId: process.env.OPENCLAW_AGENT_ID?.trim() || undefined,
-    sessionId: process.env.OPENCLAW_SESSION_ID?.trim() || undefined,
   },
 };

@@ -125,3 +125,10 @@ kbd { margin-left: auto; color: #777980; font: 11px "DM Sans", sans-serif; }
 .streaming-label { color: #e8946c; font-size: 10px; }
 .toast-error { position: absolute; right: 18px; bottom: 94px; left: 18px; z-index: 2; display: flex; justify-content: space-between; gap: 16px; padding: 11px 13px; border: 1px solid #633c38; border-radius: 9px; background: #2a1d1c; color: #f2b6ac; box-shadow: 0 10px 35px #0005; font-size: 11px; line-height: 1.5; }
 .toast-error button { align-self: flex-start; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 16px; }
+.mic-button, .voice-toggle { gap: 6px; }
+.mic-button { color: #c8c9cd; }
+.mic-button.voice-active, .voice-toggle.voice-active { color: #f2a07b; border-color: #80533f; background: #33231d; }
+@media (max-width: 480px) {
+  .mic-button span, .voice-toggle span { display: none; }
+  .mic-button, .voice-toggle { width: 30px; justify-content: center; padding: 0; }
+}

@@ -1,7 +1,23 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type ChatMessage, type OpenClawStatus, type Session } from "./api";
 
 type DisplayMessage = ChatMessage & { pending?: boolean };
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((event: Event) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+};
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+};
+type SpeechResultEvent = Event & { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> };
 const stateLabels: Record<OpenClawStatus["state"], string> = {
   not_configured: "未配置", disconnected: "未连接", connecting: "连接中", connected: "已连接", error: "连接错误",
 };
@@ -30,8 +46,54 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
+  const [listening, setListening] = useState(false);
+  const [readAloud, setReadAloud] = useState(() => localStorage.getItem("devin.voice.readAloud") === "true");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const active = sessions.find((session) => session.key === activeKey);
   const filtered = useMemo(() => sessions.filter((session) => session.title.toLowerCase().includes(query.toLowerCase())), [sessions, query]);
+
+  const speakText = useCallback((text: string) => {
+    if (!("speechSynthesis" in window) || !text.trim()) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "zh-CN";
+    utterance.rate = 1;
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
+  const toggleListening = () => {
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const SpeechRecognition = (window as SpeechRecognitionWindow).SpeechRecognition ?? (window as SpeechRecognitionWindow).webkitSpeechRecognition;
+    if (!SpeechRecognition) { setError("当前浏览器不支持语音识别，请使用 Chrome 或支持语音输入的浏览器。"); return; }
+    try {
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      recognition.lang = "zh-CN";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onresult = (event) => {
+        const resultEvent = event as SpeechResultEvent;
+        const transcript = Array.from(resultEvent.results).slice(resultEvent.resultIndex).map((result) => result[0]?.transcript ?? "").join(" ").trim();
+        if (transcript) setDraft((current) => [current.trim(), transcript].filter(Boolean).join(" "));
+      };
+      recognition.onerror = (event) => setError(`语音识别失败：${(event as Event & { error?: string }).error ?? "请检查麦克风权限"}`);
+      recognition.onend = () => { setListening(false); recognitionRef.current = null; };
+      recognition.start();
+      setListening(true);
+      setError("");
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+  };
+
+  const toggleReadAloud = () => {
+    setReadAloud((current) => {
+      const next = !current;
+      localStorage.setItem("devin.voice.readAloud", String(next));
+      if (!next && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      return next;
+    });
+  };
+
+  useEffect(() => () => { recognitionRef.current?.abort(); if ("speechSynthesis" in window) window.speechSynthesis.cancel(); }, []);
 
   const loadSessions = useCallback(async (selectFirst = false) => {
     const result = await api.sessions();
@@ -93,6 +155,7 @@ export default function App() {
           if (index < 0) return [...current, nextMessage];
           return current.map((row, i) => i === index ? { ...row, ...nextMessage } : row);
         });
+        if (state === "final" && readAloud) speakText(textFrom(message.content) || text);
         if (state !== "delta") window.setTimeout(() => void loadHistory(activeKey), 500);
       }
     };
@@ -100,7 +163,7 @@ export default function App() {
     source.addEventListener("connection.closed", () => setStatus((current) => current ? { ...current, state: "disconnected", message: "Gateway 连接已断开。" } : current));
     source.onerror = () => setStatus((current) => current?.state === "connected" ? { ...current, state: "disconnected", message: "实时连接中断，正在等待重连。" } : current);
     return () => source.close();
-  }, [activeKey, status?.state, loadHistory]);
+  }, [activeKey, status?.state, loadHistory, readAloud, speakText]);
 
   const selectSession = (key: string) => { setActiveKey(key); setSidebarOpen(false); };
   const newConversation = async () => {
@@ -150,7 +213,7 @@ export default function App() {
         <div className="messages" aria-live="polite">
           {loadingHistory ? <div className="welcome"><div className="welcome-mark">✳</div><p className="muted">正在加载 Gateway 历史…</p></div> : messages.length ? messages.map((message) => <article key={message.id} className={`message message-${message.role}`}><div className={message.role === "assistant" ? "assistant-avatar" : "user-avatar"}>{message.role === "assistant" ? "✳" : "D"}</div><div className="message-body"><div className="message-meta"><strong>{message.role === "assistant" ? "OpenClaw" : "你"}</strong><time>{clockLabel(message.timestamp)}</time>{message.pending && <span className="streaming-label">正在回复</span>}</div><p>{message.content}</p></div></article>) : <div className="welcome"><div className="welcome-mark">✳</div><p className="eyebrow">个人 AI 助手</p><h2>{status?.state === "connected" ? "今天有什么可以帮你？" : "连接 OpenClaw Gateway"}</h2><p className="muted">{status?.state === "connected" ? "从下方开始对话，消息会发送到当前会话。" : status?.message ?? "配置 Gateway 地址和凭据后即可开始。"}</p>{status?.state === "connected" && <div className="prompt-grid">{["帮我总结一段文字", "给我一些灵感", "规划今天的安排"].map((prompt) => <button key={prompt} onClick={() => void sendMessage(undefined, prompt)}>{prompt}<span>↗</span></button>)}</div>}{status?.state !== "connected" && <button className="connect-button" onClick={() => void connect()} disabled={busy}>{busy ? "连接中…" : "连接 Gateway"}</button>}</div>}
         </div>
-        <div className="composer-area"><form className="composer" onSubmit={(event) => void sendMessage(event)}><textarea aria-label="发送消息" placeholder={status?.state === "connected" ? "给 OpenClaw 发送消息…" : "连接 Gateway 后即可发送消息"} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} disabled={status?.state !== "connected" || busy} /><div className="composer-toolbar"><div className="composer-tools"><span className="tool-button mode-button"><span>◉</span> OpenClaw</span></div><div className="composer-actions"><span className="keyboard-hint">↵ 发送 · ⇧↵ 换行</span><button className="send-button" type="submit" disabled={!draft.trim() || busy || status?.state !== "connected"} aria-label="发送消息">{busy ? "…" : "↑"}</button></div></div></form><p className="composer-note">消息通过你的 OpenClaw Gateway 处理；Gateway 凭据由后端保管。</p></div>
+        <div className="composer-area"><form className="composer" onSubmit={(event) => void sendMessage(event)}><textarea aria-label="发送消息" placeholder={status?.state === "connected" ? "给 OpenClaw 发送消息…" : "连接 Gateway 后即可发送消息"} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} disabled={status?.state !== "connected" || busy} /><div className="composer-toolbar"><div className="composer-tools"><button type="button" className={`tool-button mic-button ${listening ? "voice-active" : ""}`} onClick={toggleListening} aria-label={listening ? "停止语音输入" : "语音输入"} aria-pressed={listening}>{listening ? "■" : "🎙"}<span>{listening ? "正在聆听" : "语音输入"}</span></button><button type="button" className={`tool-button voice-toggle ${readAloud ? "voice-active" : ""}`} onClick={toggleReadAloud} aria-pressed={readAloud} title="朗读 OpenClaw 回复">{readAloud ? "◖))" : "◖"}<span>朗读回复</span></button></div><div className="composer-actions"><span className="keyboard-hint">↵ 发送 · ⇧↵ 换行</span><button className="send-button" type="submit" disabled={!draft.trim() || busy || status?.state !== "connected"} aria-label="发送消息">{busy ? "…" : "↑"}</button></div></div></form><p className="composer-note">{listening ? "正在聆听中文语音，识别结果会填入输入框供你确认。" : "语音识别由浏览器提供（部分浏览器可能使用在线服务）；朗读使用设备语音。消息通过 OpenClaw Gateway 处理。"}</p></div>
         {error && <div className="toast-error" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
       </section>
     </main>

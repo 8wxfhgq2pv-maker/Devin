@@ -7,6 +7,7 @@
 - 最近会话列表和新建会话
 - 从 Gateway 加载真实聊天历史
 - 通过 `chat.send` 发送消息，使用 Gateway `chat` / `agent` 事件实时更新回复
+- 浏览器语音识别转写到输入框，用户确认后发送；可开启设备端朗读回复
 - 后端持有 Gateway 凭据；浏览器不直接接触 Gateway token
 - 后端保存设备身份和 Gateway 签发的设备 token，后续连接可复用配对
 
@@ -21,7 +22,7 @@ cp backend/.env.example backend/.env
 npm run dev
 ```
 
-前端地址 `http://localhost:5173`，后端只监听本机回环地址，前端地址 `http://localhost:5173`，后端地址 `http://127.0.0.1:3001`。首次连接可能需要在 Gateway 主机上用 `openclaw devices list` 检查并批准待配对设备。后端状态文件默认写入项目根目录的 `.data/openclaw-device.json`，并已加入 gitignore。
+前端地址 `http://localhost:5173`，后端只监听本机回环地址 `http://127.0.0.1:3001`。首次连接可能需要在 Gateway 主机上用 `openclaw devices list` 检查并批准待配对设备。后端状态文件默认写入项目根目录的 `.data/openclaw-device.json`，并已加入 gitignore。
 
 ## 配置
 
@@ -33,7 +34,7 @@ npm run dev
 | `OPENCLAW_PASSWORD` | 仅在 Gateway 使用 password 鉴权时配置 |
 | `OPENCLAW_STATE_PATH` | 设备身份和签发 token 的持久化路径 |
 
-仅在 loopback 或受信任私有网络中使用。远程 Gateway 应启用 TLS（`wss://`）。不要将 token 提交到仓库或放入前端环境变量。当前本地 Web UI 尚未提供用户登录；不要直接暴露到公网。
+仅在 loopback 或受信任私有网络中使用。远程 Gateway 应启用 TLS（`wss://`）。不要将 token 提交到仓库或放入前端环境变量。当前本地 Web UI 尚未提供用户登录；不要直接暴露到公网。语音识别依赖浏览器 Web Speech API，支持情况因浏览器而异；识别服务由浏览器或操作系统提供，部分实现可能使用在线服务。朗读使用系统或浏览器提供的中文语音。
 
 ## API
 

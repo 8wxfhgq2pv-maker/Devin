@@ -66,31 +66,53 @@
 
 **[已核实]** `openclaw gateway`（启动/状态）、`openclaw agent --message ... --agent <id>`（经 Gateway 跑一轮 agent）、`openclaw agent exec`（不连接 Gateway 的一次性运行）、`openclaw devices approve`（配对审批）。CLI 适合运维，**不推荐**作为 Web 后端的接入方式（进程开销大、无流式事件订阅）。
 
-## 4. 本脚手架的接入方案候选
+## 4. 已选方案：Gateway WebSocket v4（已实现）
 
-后端 `backend/` 作为代理层，Gateway 凭据只保存在后端环境变量中，浏览器不直接接触 Gateway。抽象层位于 `backend/src/openclaw/client.ts`（`OpenClawClient` 接口，目前为 `PlaceholderOpenClawClient`，所有连接操作返回 HTTP 501）。
+用户已确认采用方案 A：完整功能（会话列表、对话、审批、实时事件），走 Gateway WebSocket 协议 v4。另外两种方式记录如下，备查：
 
 | 方案 | 实现方式 | 优点 | 缺点 |
 | --- | --- | --- | --- |
-| A. Gateway WebSocket | 后端使用 `@openclaw/gateway-client`（Node） | 功能完整：会话列表、历史、流式事件、审批等；与官方 Control UI 同一协议 | 需实现设备身份 (Ed25519) 持久化与配对流程；需锁定客户端与 Gateway 版本 |
-| B. OpenAI 兼容 HTTP | 后端调用 `/v1/chat/completions`（可 SSE 流式） | 最简单，无需配对，协议稳定通用 | 需在 Gateway 配置中开启；仅聊天/模型，无会话管理、审批、事件 |
-| C. CLI | 后端 spawn `openclaw agent` | 无需额外配置 | 不推荐：慢、无事件流、需与 Gateway 同机 |
+| **A. Gateway WebSocket（已采用）** | 后端使用 `@openclaw/gateway-client`（Node） | 功能完整：会话列表、历史、流式事件、审批等；与官方 Control UI 同一协议 | 需实现设备身份 (Ed25519) 持久化与配对流程；需锁定客户端与 Gateway 版本 |
+| B. OpenAI 兼容 HTTP | 后端调用 `/v1/chat/completions`（可 SSE 流式） | 最简单，无需配对 | 需在 Gateway 配置中开启；仅聊天 |
+| C. CLI | 后端 spawn `openclaw agent` | 无需额外配置 | 不推荐：慢、无事件流 |
 
-**[推断]** 建议：若只需聊天，先用方案 B 做 MVP；若要会话管理/审批/实时事件，选方案 A。最终选择需用户确认（Q4/Q5）。
+### 4.1 实现概要
+
+**[已核实，本地 Gateway `2026.10.7` 联调]**
+
+- 依赖：`@openclaw/gateway-client@2026.10.7` 与 `@openclaw/gateway-protocol@2026.10.7`（精确版本，Node `>=22.19.0`）。
+- 抽象层：`backend/src/openclaw/client.ts`（`OpenClawClient` 接口），实现在 `backend/src/openclaw/gateway-client.ts`（`GatewayOpenClawClient`）。
+- 连接参数：`role: "operator"`，scopes `operator.read` / `operator.write` / `operator.approvals`，caps `approvals` / `exec-approvals` / `plugin-approvals`，`client.id = "gateway-client"`，`mode = "backend"`，协议 `min/maxProtocol = 4`（客户端默认）。
+- 设备身份：`backend/src/openclaw/device-store.ts` 生成 Ed25519 密钥对，`deviceId = sha256(原始公钥).hex`；用私钥对 `connect.challenge` 载荷签名（base64url）。身份和 Gateway 签发的设备 token 存在 `OPENCLAW_STATE_DIR`（默认 `backend/.openclaw-state/`，文件权限 0600，已 gitignore）。设备 token 按 `endpoint|deviceId|role` 存储。
+- 配对：首次连接收到 `NOT_PAIRED`（`details.code = "PAIRING_REQUIRED"`，含 `requestId`、`deviceId`、`requestedScopes`），客户端暂停重连。后端把状态置为 `pairing_required`，只向前端暴露 requestId / deviceId / scopes，并每 5 秒重试（同一设备 + 同一 scopes 会复用同一个 pending 请求）。在 Gateway 主机执行 `openclaw devices approve <requestId>` 后自动连上。注意：从回环地址连接的设备会被自动批准，跨主机（LAN/Tailscale）才需要人工审批。
+- 连接后：`sessions.subscribe` 获取会话列表并订阅变更；`exec.approval.list` / `plugin.approval.list` 回填待审批；打开某会话时 `sessions.messages.subscribe { key, includeApprovals: true }` + `chat.history`。
+- 发送：`chat.send { sessionKey, message, idempotencyKey }`，回复通过 `chat` 事件（`status` / `delta` / `final` / `error` / `aborted`）流式返回。
+- 审批：监听 `session.approval`、`exec.approval.requested/resolved`、`plugin.approval.requested/resolved`，处理时调用 `approval.resolve { id, kind, decision }`。
+- 浏览器侧：后端把以上事件归一化后通过 `GET /api/openclaw/events`（SSE）转发；浏览器从不接触 Gateway token、设备 token 或私钥。
+
+### 4.2 已知限制
+
+- **[已核实]** Gateway 只把审批推送给"有权看到"的客户端：由某个设备自己发起的 `exec.approval.request` 只对该设备可见；agent 运行时（`approvalRuntime`）发起的审批对所有带 `operator.approvals` 的客户端可见。本地联调环境没有配置模型凭据，agent 跑不起来，所以审批的 **处理** 路径没能用真实 agent 审批端到端验证，已验证的部分：后端订阅会话后能收到 `session.approval` 的 `pending` → `terminal` 事件并转发；处理接口对未知 id 返回 404、对不允许的 decision 返回 400。
+- 后端是单个 operator 设备、单连接，所有浏览器共享同一身份。
+- Web UI 自身没有用户鉴权（见第 5 节）。
 
 ## 5. 安全注意事项
 
 - Gateway token/password 等同于所有者权限：只放在 `backend/.env`（已加入 `.gitignore`），不要提交，不要下发给浏览器。
 - 不要把 Gateway 端口或本 Web UI 直接暴露到公网；本 Web UI 当前**没有自身的用户鉴权**。
-- 方案 A 的设备 token 也是凭据，需要安全持久化。
+- 设备 token 和设备私钥同样是凭据：保存在 `backend/.openclaw-state/`（0600，已 gitignore），不会出现在任何 API 响应中。
 
 ## 6. 需要用户确认的问题
 
 1. **Q1 目标项目**：OpenClaw 是否就是 [openclaw/openclaw](https://github.com/openclaw/openclaw)（AI 助手）？还是其他项目或你自己的服务？如是后者，请提供仓库地址和 API 文档。
+   - **已确认**：是 openclaw/openclaw。
 2. **Q2 Gateway 版本**：使用哪个版本？你的 fork 停留在 `2026.7.2`，上游为 `2026.10.7`。是否计划同步 fork，还是直接使用 npm 发布版？
+   - 仍待确认。当前实现锁定并联调了 `2026.10.7`。
 3. **Q3 部署位置与鉴权**：Gateway 运行在哪里（本机/远程/容器/Tailscale）？地址与端口？鉴权模式是 `token`、`password`、`trusted-proxy` 还是 `none`？（凭据请通过环境变量提供，不要发在聊天或提交到仓库。）
 4. **Q4 功能范围**：Web UI 需要哪些功能——仅聊天？会话列表/历史？实时流式输出？审批？节点/渠道/配置管理？这决定方案 A 还是 B，以及需要申请的 scopes。
+   - **已确认**：完整功能（会话列表、审批、实时事件）。
 5. **Q5 接入方式**：是否接受方案 A（需要在 Gateway 主机上做一次设备配对审批），还是先用方案 B（需在 Gateway 配置中开启 `chatCompletions` 端点）？
+   - **已确认**：方案 A（WebSocket v4 + 设备配对），已实现，见第 4.1 节。
 6. **Q6 与内置 Control UI 的区别**：OpenClaw 已自带 Web 控制台。新 UI 想解决什么内置控制台不满足的需求？（定制界面、嵌入其他系统、多用户等）
 7. **Q7 Web UI 自身的鉴权/多用户**：是否需要登录或多用户隔离？还是仅本机单人使用？
 8. **Q8 部署目标**：最终是本地开发运行，还是需要部署到服务器/容器？

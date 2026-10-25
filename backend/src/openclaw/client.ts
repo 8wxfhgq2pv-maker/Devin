@@ -1,74 +1,114 @@
 /**
- * Transport-agnostic abstraction over the connection to OpenClaw.
+ * Transport-agnostic contract between the HTTP routes and OpenClaw.
  *
- * The concrete protocol is intentionally NOT implemented yet. Candidate
- * transports (Gateway WebSocket RPC, OpenAI-compatible HTTP, CLI) are
- * described in docs/openclaw-research.md; pick one there before filling in
- * an implementation of this interface.
+ * The only implementation today is `GatewayOpenClawClient` (Gateway WebSocket
+ * protocol v4, see docs/openclaw-research.md). Routes depend on this interface
+ * so the transport can be swapped without touching them.
  */
 
 export type OpenClawConnectionState =
   | "not_configured"
   | "disconnected"
   | "connecting"
+  | "pairing_required"
   | "connected"
   | "error";
 
+export interface OpenClawPairingInfo {
+  requestId?: string;
+  deviceId: string;
+  requestedScopes?: string[];
+}
+
 export interface OpenClawStatus {
   state: OpenClawConnectionState;
-  /** Which implementation is active, e.g. "placeholder". */
   transport: string;
-  /** Remote endpoint, if configured. Never includes credentials. */
   endpoint?: string;
-  /** Server version reported by OpenClaw after connecting, if known. */
   serverVersion?: string;
+  deviceId?: string;
+  scopes?: string[];
+  pairing?: OpenClawPairingInfo;
   message?: string;
 }
 
-export interface OpenClawChatMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
+export interface OpenClawSession {
+  key: string;
+  title: string;
+  updatedAt?: number;
+  lastMessagePreview?: string;
+  hasActiveRun?: boolean;
 }
 
+export interface OpenClawChatMessage {
+  id?: string;
+  role: string;
+  text: string;
+  timestamp?: number;
+  runId?: string;
+}
+
+export interface OpenClawApproval {
+  id: string;
+  kind: string;
+  status: string;
+  summary: string;
+  warning?: string;
+  allowedDecisions: string[];
+  sessionKey?: string;
+  expiresAtMs?: number;
+}
+
+export type OpenClawChatRunState = "status" | "delta" | "final" | "error" | "aborted";
+
+export type OpenClawEvent =
+  | { type: "status"; status: OpenClawStatus }
+  | { type: "sessions.changed"; sessionKey?: string; reason?: string }
+  | {
+      type: "chat";
+      sessionKey: string;
+      runId: string;
+      state: OpenClawChatRunState;
+      text?: string;
+      phase?: string;
+      errorMessage?: string;
+    }
+  | { type: "session.message"; sessionKey: string; message: OpenClawChatMessage }
+  | { type: "approval"; approval: OpenClawApproval };
+
+export type OpenClawEventListener = (event: OpenClawEvent) => void;
+
 export interface OpenClawSendMessageRequest {
-  /** Target conversation/session; semantics depend on the chosen transport. */
-  sessionId?: string;
+  sessionKey: string;
   message: string;
 }
 
 export interface OpenClawSendMessageResult {
-  sessionId?: string;
-  reply?: OpenClawChatMessage;
+  runId?: string;
 }
-
-export interface OpenClawEvent {
-  type: string;
-  payload: unknown;
-}
-
-export type OpenClawEventListener = (event: OpenClawEvent) => void;
 
 export interface OpenClawClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getStatus(): OpenClawStatus;
+  listSessions(): Promise<OpenClawSession[]>;
+  createSession(): Promise<OpenClawSession>;
+  getHistory(sessionKey: string): Promise<OpenClawChatMessage[]>;
   sendMessage(request: OpenClawSendMessageRequest): Promise<OpenClawSendMessageResult>;
-  /** Subscribe to server-pushed events. Returns an unsubscribe function. */
+  listApprovals(): OpenClawApproval[];
+  resolveApproval(id: string, decision: string): Promise<void>;
   onEvent(listener: OpenClawEventListener): () => void;
 }
 
-export class OpenClawNotImplementedError extends Error {
-  constructor(operation: string) {
-    super(
-      `OpenClaw ${operation} is not implemented yet: the connection protocol has not been confirmed (see docs/openclaw-research.md).`,
-    );
-    this.name = "OpenClawNotImplementedError";
+/** Maps to an HTTP status in the error middleware. */
+export class OpenClawError extends Error {
+  constructor(
+    message: string,
+    readonly httpStatus: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "OpenClawError";
   }
-}
-
-export interface OpenClawClientConfig {
-  url?: string;
-  token?: string;
 }
 
 /** Strips userinfo, query string and fragment so credentials are never echoed back. */
@@ -80,36 +120,4 @@ export function redactEndpoint(url: string | undefined): string | undefined {
   } catch {
     return "(invalid URL)";
   }
-}
-
-/** Placeholder used until the OpenClaw protocol is confirmed. */
-export class PlaceholderOpenClawClient implements OpenClawClient {
-  constructor(private readonly config: OpenClawClientConfig) {}
-
-  async connect(): Promise<void> {
-    throw new OpenClawNotImplementedError("connect");
-  }
-
-  async disconnect(): Promise<void> {}
-
-  getStatus(): OpenClawStatus {
-    return {
-      state: this.config.url ? "disconnected" : "not_configured",
-      transport: "placeholder",
-      endpoint: redactEndpoint(this.config.url),
-      message: "Connection logic pending protocol confirmation.",
-    };
-  }
-
-  async sendMessage(): Promise<OpenClawSendMessageResult> {
-    throw new OpenClawNotImplementedError("sendMessage");
-  }
-
-  onEvent(): () => void {
-    return () => {};
-  }
-}
-
-export function createOpenClawClient(config: OpenClawClientConfig): OpenClawClient {
-  return new PlaceholderOpenClawClient(config);
 }

@@ -13,7 +13,7 @@
     "typecheck": "npm run typecheck -w backend && npm run typecheck -w frontend"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.19.0"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

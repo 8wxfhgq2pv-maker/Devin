@@ -4,3 +4,6 @@ dist/
 .env
 .env.local
 .DS_Store
+
+# OpenClaw device identity + device tokens (credentials)
+.openclaw-state/

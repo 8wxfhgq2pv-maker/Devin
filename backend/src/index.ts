@@ -1,6 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import { config } from "./config.js";
-import { createOpenClawClient, OpenClawNotImplementedError } from "./openclaw/client.js";
+import { createOpenClawClient } from "./openclaw/client.js";
 import { openclawRouter } from "./routes/openclaw.js";
 
 const app = express();
@@ -15,15 +15,15 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/openclaw", openclawRouter(openclaw));
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
-  if (err instanceof OpenClawNotImplementedError) {
-    res.status(501).json({ error: err.message });
-    return;
-  }
-  console.error(err);
-  res.status(500).json({ error: "Internal server error" });
+  const message = err instanceof Error ? err.message : "OpenClaw request failed";
+  console.error(message);
+  res.status(502).json({ error: message });
 };
 app.use(errorHandler);
 
-app.listen(config.port, () => {
+app.listen(config.port, "127.0.0.1", () => {
   console.log(`backend listening on http://localhost:${config.port}`);
 });
+
+process.on("SIGINT", () => { void openclaw.disconnect().finally(() => process.exit(0)); });
+process.on("SIGTERM", () => { void openclaw.disconnect().finally(() => process.exit(0)); });

@@ -91,7 +91,10 @@ export default function App() {
       switch (event.type) {
         case "status":
           setStatus(event.status);
-          if (event.status.state === "connected") void loadSessions();
+          if (event.status.state === "connected") {
+            void loadSessions();
+            if (selectedRef.current) void loadHistory(selectedRef.current);
+          }
           break;
         case "sessions.changed":
           void loadSessions();
@@ -261,7 +264,7 @@ export default function App() {
                   placeholder="输入消息，Ctrl+Enter 发送"
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void send();
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && connected && !busy && draft.trim()) void send();
                   }}
                 />
                 <button onClick={() => void send()} disabled={!connected || busy || !draft.trim()}>

@@ -120,7 +120,12 @@ export class GatewayOpenClawClient implements OpenClawClient {
   private readonly store: DeviceStore;
   private readonly sessions = new Map<string, OpenClawSession>();
   private readonly approvals = new Map<string, OpenClawApproval>();
+  /** Sessions the UI has opened; replayed after every (re)connect. */
+  private readonly desiredSubscriptions = new Set<string>();
+  /** Subscriptions active on the current Gateway connection. */
   private readonly messageSubscriptions = new Set<string>();
+  /** Approval ids touched by live events while a reconnect snapshot is in flight. */
+  private approvalEventsDuringBootstrap?: Set<string>;
   private readonly runText = new Map<string, string>();
   private pairingTimer?: NodeJS.Timeout;
   private wantConnected = false;
@@ -338,23 +343,51 @@ export class GatewayOpenClawClient implements OpenClawClient {
     } catch (err) {
       console.warn(`[openclaw] sessions.subscribe failed: ${(err as Error).message}`);
     }
-    for (const [method, kind] of [
-      ["exec.approval.list", "exec"],
-      ["plugin.approval.list", "plugin"],
-    ] as const) {
-      try {
-        const list = await this.request(method, {});
-        for (const item of Array.isArray(list) ? list : []) {
-          const approval = toApproval(item, kind);
-          if (approval) this.upsertApproval(approval);
+    for (const sessionKey of this.desiredSubscriptions) {
+      await this.subscribeMessages(sessionKey).catch((err) =>
+        console.warn(`[openclaw] resubscribe ${sessionKey} failed: ${(err as Error).message}`),
+      );
+    }
+    await this.refreshApprovals();
+  }
+
+  /** Replaces the pending-approval cache with a fresh Gateway snapshot. */
+  private async refreshApprovals(): Promise<void> {
+    const touched = new Set<string>();
+    this.approvalEventsDuringBootstrap = touched;
+    const fetched = new Set<string>();
+    let complete = true;
+    try {
+      for (const [method, kind] of [
+        ["exec.approval.list", "exec"],
+        ["plugin.approval.list", "plugin"],
+      ] as const) {
+        try {
+          const list = await this.request(method, {});
+          for (const item of Array.isArray(list) ? list : []) {
+            const approval = toApproval(item, kind);
+            if (!approval) continue;
+            fetched.add(approval.id);
+            if (!touched.has(approval.id)) this.upsertApproval(approval);
+          }
+        } catch (err) {
+          complete = false;
+          console.warn(`[openclaw] ${method} failed: ${(err as Error).message}`);
         }
-      } catch (err) {
-        console.warn(`[openclaw] ${method} failed: ${(err as Error).message}`);
+      }
+    } finally {
+      this.approvalEventsDuringBootstrap = undefined;
+    }
+    if (!complete) return;
+    for (const approval of [...this.approvals.values()]) {
+      if (!fetched.has(approval.id) && !touched.has(approval.id)) {
+        this.upsertApproval({ ...approval, status: "expired" });
       }
     }
   }
 
   private async subscribeMessages(sessionKey: string): Promise<void> {
+    this.desiredSubscriptions.add(sessionKey);
     if (this.messageSubscriptions.has(sessionKey)) return;
     await this.request("sessions.messages.subscribe", { key: sessionKey, includeApprovals: true });
     this.messageSubscriptions.add(sessionKey);
@@ -419,6 +452,7 @@ export class GatewayOpenClawClient implements OpenClawClient {
         const approval = toApproval(p, event.startsWith("plugin.") ? "plugin" : "exec");
         if (!approval) return;
         if (event.endsWith(".resolved") && approval.status === "pending") approval.status = "resolved";
+        this.approvalEventsDuringBootstrap?.add(approval.id);
         this.upsertApproval(approval);
         return;
       }

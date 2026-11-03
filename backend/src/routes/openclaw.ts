@@ -45,14 +45,6 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
     res.write(`event: ready\ndata: ${JSON.stringify({ connected: client.getStatus().state === "connected" })}\n\n`);
     res.write(`event: projection\ndata: ${JSON.stringify({ sessionKey, ...client.getProjection(sessionKey) })}\n\n`);
     let closed = false;
-    let heartbeat: NodeJS.Timeout | undefined;
-    let unsubscribe: (() => void) | undefined;
-    const cleanup = () => {
-      if (closed) return;
-      closed = true;
-      if (heartbeat) clearInterval(heartbeat);
-      unsubscribe?.();
-    };
     const send = (event: OpenClawEvent) => {
       if (closed) return;
       if (event.event === "projection") {
@@ -64,8 +56,14 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
         res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.payload)}\n\n`);
       }
     };
-    unsubscribe = client.onEvent(send);
-    heartbeat = setInterval(() => { if (!closed) res.write(": keepalive\n\n"); }, 20_000);
+    const unsubscribe = client.onEvent(send);
+    const heartbeat = setInterval(() => { if (!closed) res.write(": keepalive\n\n"); }, 20_000);
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
     req.on("close", cleanup);
     res.on("error", cleanup);
   });

@@ -130,7 +130,8 @@ export class GatewayOpenClawClient {
         if (settled) return;
         settled = true;
         if (timeout) clearTimeout(timeout);
-        error ? reject(error) : resolve();
+        if (error) reject(error);
+        else resolve();
       };
       timeout = setTimeout(() => done(new Error("连接 Gateway 超时，请检查地址和网络。")), 15_000);
       const hostDeps: GatewayClientHostDeps = {

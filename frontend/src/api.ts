@@ -11,7 +11,7 @@ export interface ChatMessage { id: string; role: "user" | "assistant"; content: 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try { res = await fetch(path, { ...init, headers: { Accept: "application/json", ...init?.headers } }); }
-  catch { throw new Error("无法连接后端，请确认 Devin 后端服务正在运行。"); }
+  catch { throw new Error("无法连接后端，请确认本地后端服务正在运行。"); }
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     const error = body && typeof body === "object" && "error" in body ? String((body as { error: unknown }).error) : `${res.status} ${res.statusText}`;

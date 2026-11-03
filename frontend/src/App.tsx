@@ -21,9 +21,15 @@ type SpeechResultEvent = Event & { resultIndex: number; results: ArrayLike<Array
 const stateLabels: Record<OpenClawStatus["state"], string> = {
   not_configured: "未配置", disconnected: "未连接", connecting: "连接中", connected: "已连接", error: "连接错误",
 };
+const READ_ALOUD_KEY = "openclaw.voice.readAloud";
+const LEGACY_READ_ALOUD_KEY = "devin.voice.readAloud";
+const shortcutModifier = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? "⌘" : "Ctrl";
+function storedReadAloud(): boolean {
+  return (localStorage.getItem(READ_ALOUD_KEY) ?? localStorage.getItem(LEGACY_READ_ALOUD_KEY)) === "true";
+}
 function textFrom(value: unknown): string {
   if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map((part) => part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : "").join("");
+  if (Array.isArray(value)) return value.map((part) => part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : "[附件]").join("");
   return "";
 }
 function clockLabel(timestamp = Date.now()) {
@@ -47,8 +53,9 @@ export default function App() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
   const [listening, setListening] = useState(false);
-  const [readAloud, setReadAloud] = useState(() => localStorage.getItem("devin.voice.readAloud") === "true");
+  const [readAloud, setReadAloud] = useState(storedReadAloud);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const activeKeyRef = useRef(activeKey);
   activeKeyRef.current = activeKey;
   const active = sessions.find((session) => session.key === activeKey);
@@ -89,7 +96,7 @@ export default function App() {
   const toggleReadAloud = () => {
     setReadAloud((current) => {
       const next = !current;
-      localStorage.setItem("devin.voice.readAloud", String(next));
+      localStorage.setItem(READ_ALOUD_KEY, String(next));
       if (!next && "speechSynthesis" in window) window.speechSynthesis.cancel();
       return next;
     });
@@ -100,11 +107,13 @@ export default function App() {
   const loadSessions = useCallback(async (selectFirst = false) => {
     const result = await api.sessions();
     setSessions(result);
-    if (selectFirst || !activeKey) {
+    if (selectFirst) {
       const first = result[0];
       if (first) setActiveKey(first.key);
+      return;
     }
-  }, [activeKey]);
+    setActiveKey((current) => current || result[0]?.key || "");
+  }, []);
 
   const loadHistory = useCallback(async (key: string) => {
     setLoadingHistory(true);
@@ -176,7 +185,7 @@ export default function App() {
   }, [activeKey, status?.state, loadHistory, readAloud, speakText]);
 
   const selectSession = (key: string) => { setActiveKey(key); setSidebarOpen(false); };
-  const newConversation = async () => {
+  const newConversation = useCallback(async () => {
     if (status?.state !== "connected") { setError("请先连接 OpenClaw Gateway。"); return; }
     setBusy(true); setError("");
     try {
@@ -185,7 +194,23 @@ export default function App() {
       setActiveKey(session.key); setSidebarOpen(false);
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
-  };
+  }, [status?.state]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "k") { event.preventDefault(); void newConversation(); }
+      else if (key === "f") {
+        event.preventDefault();
+        setSidebarOpen(true);
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [newConversation]);
   const sendMessage = async (event?: FormEvent, supplied = draft) => {
     event?.preventDefault();
     const content = supplied.trim();
@@ -204,8 +229,8 @@ export default function App() {
       {sidebarOpen && <button aria-label="关闭导航" className="scrim" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="sidebar-top"><a className="brand" href="#" aria-label="OpenClaw 首页"><span className="brand-mark">✳</span><span>openclaw</span></a><button className="icon-button sidebar-close" aria-label="关闭导航" onClick={() => setSidebarOpen(false)}>×</button></div>
-        <button className="new-chat" onClick={() => void newConversation()} disabled={busy}><span className="plus">＋</span> 新建对话 <kbd>⌘ K</kbd></button>
-        <label className="search-box"><span aria-hidden="true">⌕</span><input aria-label="搜索对话" placeholder="搜索对话" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>⌘ F</kbd></label>
+        <button className="new-chat" onClick={() => void newConversation()} disabled={busy}><span className="plus">＋</span> 新建对话 <kbd>{shortcutModifier} K</kbd></button>
+        <label className="search-box"><span aria-hidden="true">⌕</span><input ref={searchRef} aria-label="搜索对话" placeholder="搜索对话" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>{shortcutModifier} F</kbd></label>
         <div className="nav-label">最近对话</div>
         <nav className="conversation-list" aria-label="最近对话">
           {filtered.map((session) => <button key={session.key} className={`conversation-item ${session.key === activeKey ? "active" : ""}`} onClick={() => selectSession(session.key)}><span className="conversation-icon">◌</span><span className="conversation-title">{session.title}</span></button>)}

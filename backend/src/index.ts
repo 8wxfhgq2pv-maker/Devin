@@ -1,5 +1,6 @@
 import express, { type ErrorRequestHandler } from "express";
 import { config } from "./config.js";
+import { statusForError } from "./http-errors.js";
 import { createOpenClawClient } from "./openclaw/client.js";
 import { openclawRouter } from "./routes/openclaw.js";
 
@@ -14,10 +15,12 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/openclaw", openclawRouter(openclaw));
 
-const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+const errorHandler: ErrorRequestHandler = (err, _req, res, next) => {
   const message = err instanceof Error ? err.message : "OpenClaw request failed";
+  const status = statusForError(err);
   console.error(message);
-  res.status(502).json({ error: message });
+  if (res.headersSent) { next(err); return; }
+  res.status(status).json({ error: message });
 };
 app.use(errorHandler);
 

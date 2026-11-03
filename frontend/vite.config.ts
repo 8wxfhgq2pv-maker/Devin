@@ -11,4 +11,10 @@ export default defineConfig({
       "/api": backendUrl,
     },
   },
+  preview: {
+    port: 4173,
+    proxy: {
+      "/api": backendUrl,
+    },
+  },
 });

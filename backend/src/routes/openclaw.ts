@@ -29,6 +29,13 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
     catch (err) { next(err); }
   });
 
+  router.post("/abort", async (req, res, next) => {
+    const parsed = parseSessionKey((req.body ?? {}) as Record<string, unknown>);
+    if (!parsed.ok) { res.status(parsed.status).json({ error: parsed.error }); return; }
+    try { res.status(202).json(await client.abortRun({ sessionKey: parsed.value })); }
+    catch (err) { next(err); }
+  });
+
   router.get("/events", (req, res) => {
     const parsed = parseSessionKey(req.query);
     if (!parsed.ok) { res.status(parsed.status).json({ error: parsed.error }); return; }
@@ -36,6 +43,7 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
     res.status(200).set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" });
     res.flushHeaders();
     res.write(`event: ready\ndata: ${JSON.stringify({ connected: client.getStatus().state === "connected" })}\n\n`);
+    res.write(`event: projection\ndata: ${JSON.stringify({ sessionKey, ...client.getProjection(sessionKey) })}\n\n`);
     let closed = false;
     let heartbeat: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -47,7 +55,12 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
     };
     const send = (event: OpenClawEvent) => {
       if (closed) return;
-      if (event.event.startsWith("connection.") || eventBelongsToSession(event.payload, sessionKey)) {
+      if (event.event === "projection") {
+        if (!eventBelongsToSession(event.payload, sessionKey)) return;
+        res.write(`event: projection\ndata: ${JSON.stringify(event.payload)}\n\n`);
+        return;
+      }
+      if (event.event.startsWith("connection.")) {
         res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.payload)}\n\n`);
       }
     };

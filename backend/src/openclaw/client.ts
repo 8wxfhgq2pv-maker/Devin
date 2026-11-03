@@ -3,6 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version";
+import { SessionProjectionStore, type ProjectionMessage, type SerializedProjection } from "./projection.js";
 
 export type OpenClawConnectionState = "not_configured" | "disconnected" | "connecting" | "connected" | "error";
 export interface OpenClawStatus {
@@ -19,17 +20,15 @@ export interface OpenClawSession {
   model?: string;
   channel?: string;
 }
-export interface OpenClawMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp?: number;
-}
+export type OpenClawMessage = ProjectionMessage;
 export interface OpenClawEvent { event: string; payload: unknown }
 export type OpenClawEventListener = (event: OpenClawEvent) => void;
 
 type AuthState = { identity?: DeviceIdentity; tokens?: Record<string, { token: string; scopes: string[] }> };
 export interface OpenClawClientConfig { url?: string; token?: string; password?: string; statePath?: string }
+
+const HISTORY_LIMIT = 80;
+const PROJECTION_FLUSH_MS = 60;
 
 export function redactEndpoint(url: string | undefined): string | undefined {
   if (!url) return undefined;
@@ -82,6 +81,8 @@ export class GatewayOpenClawClient {
   private gateway?: GatewayClient;
   private status: OpenClawStatus;
   private readonly listeners = new Set<OpenClawEventListener>();
+  private readonly projections = new SessionProjectionStore();
+  private readonly projectionTimers = new Map<string, NodeJS.Timeout>();
   private connectPromise?: Promise<void>;
   private readonly statePath: string;
 
@@ -99,6 +100,11 @@ export class GatewayOpenClawClient {
   onEvent(listener: OpenClawEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Current projection for a session: transcript plus any in-flight run overlay. */
+  getProjection(sessionKey: string): SerializedProjection {
+    return this.projections.serialize(sessionKey);
   }
 
   async connect(): Promise<void> {
@@ -177,7 +183,10 @@ export class GatewayOpenClawClient {
           this.status = { ...this.status, state: "disconnected", message: reason || "Gateway 连接已断开。" };
           this.emit({ event: "connection.closed", payload: { reason } });
         },
-        onEvent: (event) => this.emit({ event: event.event, payload: event.payload }),
+        onEvent: (event) => {
+          this.ingestGatewayEvent({ event: event.event, payload: event.payload });
+          this.emit({ event: event.event, payload: event.payload });
+        },
       });
       this.gateway.start();
     });
@@ -188,6 +197,54 @@ export class GatewayOpenClawClient {
       this.status = { ...this.status, state: "error", message: error instanceof Error ? error.message : String(error) };
       throw error;
     }
+  }
+
+  /**
+   * Routes Gateway chat events into the session projection. The projection is what the browser
+   * renders, so streamed deltas, terminal states and durable rows all reconcile in one place.
+   */
+  private ingestGatewayEvent(event: { event: string; payload: unknown }): void {
+    const payload = event.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+    const row = payload as Record<string, unknown>;
+    const sessionKey = typeof row.sessionKey === "string" ? row.sessionKey : typeof row.session === "string" ? row.session : "";
+    if (!sessionKey) return;
+    if (event.event !== "chat") return;
+    const phase = typeof row.state === "string" ? row.state : "";
+    this.projections.ingestRunEvent(sessionKey, row);
+    this.scheduleProjection(sessionKey, phase !== "delta");
+    if (phase === "final" || phase === "error" || phase === "aborted") void this.refreshSnapshot(sessionKey);
+  }
+
+  /** Reconciles history when connected; failures are ignored so the live projection remains available. */
+  private async refreshSnapshot(sessionKey: string): Promise<void> {
+    if (!this.gateway || this.status.state !== "connected") return;
+    try {
+      const result = await this.gateway.request<{ messages?: unknown[] }>("chat.history", { sessionKey, limit: HISTORY_LIMIT });
+      this.projections.ingestSnapshot(sessionKey, result.messages ?? []);
+      this.scheduleProjection(sessionKey, true);
+    } catch {
+      // The live projection still holds the streamed turn; the next history load will reconcile.
+    }
+  }
+
+  /** Emits the projection now or debounces it for 60 ms, replacing any pending emission for the session. */
+  private scheduleProjection(sessionKey: string, immediate: boolean): void {
+    const pending = this.projectionTimers.get(sessionKey);
+    if (pending) clearTimeout(pending);
+    if (immediate) {
+      this.projectionTimers.delete(sessionKey);
+      this.emitProjection(sessionKey);
+      return;
+    }
+    this.projectionTimers.set(sessionKey, setTimeout(() => {
+      this.projectionTimers.delete(sessionKey);
+      this.emitProjection(sessionKey);
+    }, PROJECTION_FLUSH_MS));
+  }
+
+  private emitProjection(sessionKey: string): void {
+    this.emit({ event: "projection", payload: { sessionKey, ...this.projections.serialize(sessionKey) } });
   }
 
   private emit(event: OpenClawEvent): void { for (const listener of this.listeners) listener(event); }
@@ -212,16 +269,17 @@ export class GatewayOpenClawClient {
     });
   }
 
-  async getHistory(sessionKey: string, limit = 80): Promise<OpenClawMessage[]> {
+  /**
+   * Requests up to `limit` history entries from the Gateway (default 80), reconciles and emits
+   * the projection, and returns its displayable messages, including any run overlays.
+   * Connection and Gateway request errors propagate to the caller.
+   */
+  async getHistory(sessionKey: string, limit = HISTORY_LIMIT): Promise<OpenClawMessage[]> {
     const client = await this.readyClient();
-    const result = await client.request<{ messages?: Array<Record<string, unknown>> }>("chat.history", { sessionKey, limit });
-    return (result.messages ?? []).flatMap((row, index) => {
-      if (row.role !== "user" && row.role !== "assistant") return [];
-      const content = typeof row.content === "string" ? row.content : Array.isArray(row.content)
-        ? row.content.map((part) => part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : "[附件]").join("")
-        : "";
-      return [{ id: String(row.id ?? `${row.role}-${row.timestamp ?? index}`), role: row.role, content, ...(typeof row.timestamp === "number" ? { timestamp: row.timestamp } : {}) }];
-    });
+    const result = await client.request<{ messages?: unknown[] }>("chat.history", { sessionKey, limit });
+    this.projections.ingestSnapshot(sessionKey, result.messages ?? []);
+    this.scheduleProjection(sessionKey, true);
+    return this.projections.serialize(sessionKey).messages;
   }
 
   async createSession(): Promise<OpenClawSession> {
@@ -232,12 +290,37 @@ export class GatewayOpenClawClient {
     return { key, title: String(result.title ?? "新对话") };
   }
 
+  /**
+   * Publishes a pending user turn and sends it to the Gateway without waiting for the final reply.
+   * If the send request fails, marks the turn failed, emits the updated projection, and rethrows.
+   * Connection errors also propagate.
+   */
   async sendMessage(params: { sessionKey: string; message: string; idempotencyKey: string }): Promise<{ runId?: string }> {
     const client = await this.readyClient();
-    return client.request("chat.send", params, { expectFinal: false });
+    this.projections.markSendPending(params.sessionKey, params);
+    this.scheduleProjection(params.sessionKey, true);
+    try {
+      const result = await client.request<{ runId?: string }>("chat.send", params, { expectFinal: false });
+      return result;
+    } catch (error) {
+      this.projections.failSend(params.sessionKey, params.idempotencyKey);
+      this.scheduleProjection(params.sessionKey, true);
+      throw error;
+    }
+  }
+
+  /** Requests an abort for the session, optionally targeting a nonempty run ID; connection and request errors propagate. */
+  async abortRun(params: { sessionKey: string; runId?: string }): Promise<{ ok?: boolean }> {
+    const client = await this.readyClient();
+    return client.request<{ ok?: boolean }>("chat.abort", {
+      sessionKey: params.sessionKey,
+      ...(params.runId ? { runId: params.runId } : {}),
+    });
   }
 
   async disconnect(): Promise<void> {
+    for (const timer of this.projectionTimers.values()) clearTimeout(timer);
+    this.projectionTimers.clear();
     await this.gateway?.stopAndWait({ timeoutMs: 1000 });
     this.gateway = undefined;
     this.status = { ...this.status, state: this.config.url ? "disconnected" : "not_configured" };

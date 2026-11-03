@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type ChatMessage, type OpenClawStatus, type Session } from "./api";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 type DisplayMessage = ChatMessage & { pending?: boolean };
 type SpeechRecognitionLike = {
@@ -27,18 +28,8 @@ const shortcutModifier = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? "⌘
 function storedReadAloud(): boolean {
   return (localStorage.getItem(READ_ALOUD_KEY) ?? localStorage.getItem(LEGACY_READ_ALOUD_KEY)) === "true";
 }
-function textFrom(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map((part) => part && typeof part === "object" && "text" in part ? String((part as { text: unknown }).text) : "[附件]").join("");
-  return "";
-}
 function clockLabel(timestamp = Date.now()) {
   return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(timestamp);
-}
-function eventText(payload: Record<string, unknown>): string {
-  if (typeof payload.deltaText === "string") return payload.deltaText;
-  if (typeof payload.text === "string") return payload.text;
-  return textFrom((payload.message as Record<string, unknown> | undefined)?.content);
 }
 
 export default function App() {
@@ -50,12 +41,14 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
   const [listening, setListening] = useState(false);
   const [readAloud, setReadAloud] = useState(storedReadAloud);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const streamingRef = useRef(false);
   const activeKeyRef = useRef(activeKey);
   activeKeyRef.current = activeKey;
   const active = sessions.find((session) => session.key === activeKey);
@@ -150,39 +143,31 @@ export default function App() {
   useEffect(() => {
     if (!activeKey || status?.state !== "connected") return;
     const source = new EventSource(api.eventsUrl(activeKey));
-    const handleChat = (event: MessageEvent<string>) => {
-      let payload: Record<string, unknown>;
-      try { payload = JSON.parse(event.data) as Record<string, unknown>; } catch { return; }
-      if (payload.sessionKey !== activeKey) return;
-      const runId = String(payload.runId ?? "live");
-      const state = String(payload.state ?? "");
-      const message = payload.message && typeof payload.message === "object" ? payload.message as Record<string, unknown> : {};
-      const text = eventText(payload);
-      if (state === "delta" || state === "final" || state === "aborted" || state === "error") {
-        setMessages((current) => {
-          const index = current.findIndex((row) => row.id === `run:${runId}`);
-          const previous = index >= 0 ? current[index].content : "";
-          const delta = typeof payload.deltaText === "string" ? payload.deltaText : "";
-          const snapshot = textFrom(message.content);
-          const content = state === "delta"
-            ? payload.replace === true ? delta : previous + delta
-            : snapshot || text || previous;
-          const nextMessage: DisplayMessage = { id: `run:${runId}`, role: "assistant", content, timestamp: Date.now(), pending: state === "delta" };
-          if (index < 0) return [...current, nextMessage];
-          return current.map((row, i) => i === index ? { ...row, ...nextMessage } : row);
-        });
-        if (state === "final" && readAloud) speakText(textFrom(message.content) || text);
-        if (state !== "delta") window.setTimeout(() => void loadHistory(activeKey), 500);
+    // The backend owns the session projection, so the browser renders whatever it last published
+    // instead of merging deltas itself.
+    const handleProjection = (event: MessageEvent<string>) => {
+      let payload: { sessionKey?: string; messages?: DisplayMessage[]; streaming?: boolean };
+      try { payload = JSON.parse(event.data) as typeof payload; } catch { return; }
+      if (payload.sessionKey !== activeKey || !Array.isArray(payload.messages)) return;
+      const wasStreaming = streamingRef.current;
+      const nowStreaming = payload.streaming === true;
+      streamingRef.current = nowStreaming;
+      setStreaming(nowStreaming);
+      setMessages(payload.messages);
+      setLoadingHistory(false);
+      if (wasStreaming && !nowStreaming && readAloud) {
+        const last = [...payload.messages].reverse().find((row) => row.role === "assistant");
+        if (last) speakText(last.content);
       }
     };
-    source.addEventListener("chat", handleChat as EventListener);
+    source.addEventListener("projection", handleProjection as EventListener);
     source.addEventListener("connection.closed", () => setStatus((current) => current ? { ...current, state: "disconnected", message: "Gateway 连接已断开。" } : current));
     source.onerror = () => {
       // EventSource retries transient failures automatically; keep Gateway state connected
       // so this effect does not close the stream before its retry can succeed.
     };
     return () => source.close();
-  }, [activeKey, status?.state, loadHistory, readAloud, speakText]);
+  }, [activeKey, status?.state, readAloud, speakText]);
 
   const selectSession = (key: string) => { setActiveKey(key); setSidebarOpen(false); };
   const newConversation = useCallback(async () => {
@@ -216,11 +201,19 @@ export default function App() {
     const content = supplied.trim();
     if (!content || !activeKey || busy || status?.state !== "connected") return;
     const idempotencyKey = crypto.randomUUID();
-    const userMessage: DisplayMessage = { id: `user:${idempotencyKey}`, role: "user", content, timestamp: Date.now() };
-    setMessages((current) => [...current, userMessage]); setDraft(""); setBusy(true); setError("");
+    setDraft(""); setBusy(true); setError("");
     try { await api.send(activeKey, content, idempotencyKey); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); setMessages((current) => current.filter((message) => message.id !== userMessage.id)); }
+    catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setDraft((current) => current || content);
+    }
     finally { setBusy(false); }
+  };
+
+  const stopStreaming = async () => {
+    if (!activeKey) return;
+    try { await api.abort(activeKey); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
 
   const stateClass = status?.state === "connected" ? "ok" : status?.state === "error" ? "err" : "";
@@ -246,9 +239,9 @@ export default function App() {
         <header className="topbar"><div className="topbar-left"><button className="icon-button menu-button" aria-label="打开导航" onClick={() => setSidebarOpen(true)}>☰</button><span className="mobile-brand"><span className="brand-mark">✳</span> openclaw</span><span className="topbar-divider" /><span className="model-label"><span className="model-dot" /> {active?.model ?? "OpenClaw"} <span className="chevron">⌄</span></span></div><div className="topbar-right"><span className="demo-pill"><span className={`connection-dot ${status?.state === "connected" ? "connected" : ""}`} />{status?.state === "connected" ? "已连接" : "未连接"}</span><button className="icon-button" aria-label="刷新会话" onClick={() => void loadSessions(true)}>↻</button></div></header>
         <div className="conversation-heading"><div><p className="eyebrow">{active?.channel ?? "OPENCLAW SESSION"}</p><h1>{active?.title ?? "新对话"}</h1></div><span className="session-key" title={activeKey}>{activeKey}</span></div>
         <div className="messages" aria-live="polite">
-          {loadingHistory ? <div className="welcome"><div className="welcome-mark">✳</div><p className="muted">正在加载 Gateway 历史…</p></div> : messages.length ? messages.map((message) => <article key={message.id} className={`message message-${message.role}`}><div className={message.role === "assistant" ? "assistant-avatar" : "user-avatar"}>{message.role === "assistant" ? "✳" : "D"}</div><div className="message-body"><div className="message-meta"><strong>{message.role === "assistant" ? "OpenClaw" : "你"}</strong><time>{clockLabel(message.timestamp)}</time>{message.pending && <span className="streaming-label">正在回复</span>}</div><p>{message.content}</p></div></article>) : <div className="welcome"><div className="welcome-mark">✳</div><p className="eyebrow">个人 AI 助手</p><h2>{status?.state === "connected" ? "今天有什么可以帮你？" : "连接 OpenClaw Gateway"}</h2><p className="muted">{status?.state === "connected" ? "从下方开始对话，消息会发送到当前会话。" : status?.message ?? "配置 Gateway 地址和凭据后即可开始。"}</p>{status?.state === "connected" && <div className="prompt-grid">{["帮我总结一段文字", "给我一些灵感", "规划今天的安排"].map((prompt) => <button key={prompt} onClick={() => void sendMessage(undefined, prompt)}>{prompt}<span>↗</span></button>)}</div>}{status?.state !== "connected" && <button className="connect-button" onClick={() => void connect()} disabled={busy}>{busy ? "连接中…" : "连接 Gateway"}</button>}</div>}
+          {loadingHistory ? <div className="welcome"><div className="welcome-mark">✳</div><p className="muted">正在加载 Gateway 历史…</p></div> : messages.length ? messages.map((message) => <article key={message.id} className={`message message-${message.role}`}><div className={message.role === "assistant" ? "assistant-avatar" : "user-avatar"}>{message.role === "assistant" ? "✳" : "D"}</div><div className="message-body"><div className="message-meta"><strong>{message.role === "assistant" ? "OpenClaw" : "你"}</strong><time>{clockLabel(message.timestamp)}</time>{message.pending && <span className="streaming-label">正在回复</span>}</div>{message.role === "assistant" ? <MarkdownMessage content={message.content} /> : <p>{message.content}</p>}</div></article>) : <div className="welcome"><div className="welcome-mark">✳</div><p className="eyebrow">个人 AI 助手</p><h2>{status?.state === "connected" ? "今天有什么可以帮你？" : "连接 OpenClaw Gateway"}</h2><p className="muted">{status?.state === "connected" ? "从下方开始对话，消息会发送到当前会话。" : status?.message ?? "配置 Gateway 地址和凭据后即可开始。"}</p>{status?.state === "connected" && <div className="prompt-grid">{["帮我总结一段文字", "给我一些灵感", "规划今天的安排"].map((prompt) => <button key={prompt} onClick={() => void sendMessage(undefined, prompt)}>{prompt}<span>↗</span></button>)}</div>}{status?.state !== "connected" && <button className="connect-button" onClick={() => void connect()} disabled={busy}>{busy ? "连接中…" : "连接 Gateway"}</button>}</div>}
         </div>
-        <div className="composer-area"><form className="composer" onSubmit={(event) => void sendMessage(event)}><textarea aria-label="发送消息" placeholder={status?.state === "connected" ? "给 OpenClaw 发送消息…" : "连接 Gateway 后即可发送消息"} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} disabled={status?.state !== "connected" || busy} /><div className="composer-toolbar"><div className="composer-tools"><button type="button" className={`tool-button mic-button ${listening ? "voice-active" : ""}`} onClick={toggleListening} aria-label={listening ? "停止语音输入" : "语音输入"} aria-pressed={listening}>{listening ? "■" : "🎙"}<span>{listening ? "正在聆听" : "语音输入"}</span></button><button type="button" className={`tool-button voice-toggle ${readAloud ? "voice-active" : ""}`} onClick={toggleReadAloud} aria-pressed={readAloud} title="朗读 OpenClaw 回复">{readAloud ? "◖))" : "◖"}<span>朗读回复</span></button></div><div className="composer-actions"><span className="keyboard-hint">↵ 发送 · ⇧↵ 换行</span><button className="send-button" type="submit" disabled={!draft.trim() || busy || status?.state !== "connected"} aria-label="发送消息">{busy ? "…" : "↑"}</button></div></div></form><p className="composer-note">{listening ? "正在聆听中文语音，识别结果会填入输入框供你确认。" : "语音识别由浏览器提供（部分浏览器可能使用在线服务）；朗读使用设备语音。消息通过 OpenClaw Gateway 处理。"}</p></div>
+        <div className="composer-area"><form className="composer" onSubmit={(event) => void sendMessage(event)}><textarea aria-label="发送消息" placeholder={status?.state === "connected" ? "给 OpenClaw 发送消息…" : "连接 Gateway 后即可发送消息"} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} rows={2} disabled={status?.state !== "connected" || busy} /><div className="composer-toolbar"><div className="composer-tools"><button type="button" className={`tool-button mic-button ${listening ? "voice-active" : ""}`} onClick={toggleListening} aria-label={listening ? "停止语音输入" : "语音输入"} aria-pressed={listening}>{listening ? "■" : "🎙"}<span>{listening ? "正在聆听" : "语音输入"}</span></button><button type="button" className={`tool-button voice-toggle ${readAloud ? "voice-active" : ""}`} onClick={toggleReadAloud} aria-pressed={readAloud} title="朗读 OpenClaw 回复">{readAloud ? "◖))" : "◖"}<span>朗读回复</span></button></div><div className="composer-actions"><span className="keyboard-hint">{streaming ? "正在生成…" : "↵ 发送 · ⇧↵ 换行"}</span>{streaming ? <button className="stop-button" type="button" onClick={() => void stopStreaming()} aria-label="停止生成">■ 停止</button> : <button className="send-button" type="submit" disabled={!draft.trim() || busy || status?.state !== "connected"} aria-label="发送消息">{busy ? "…" : "↑"}</button>}</div></div></form><p className="composer-note">{listening ? "正在聆听中文语音，识别结果会填入输入框供你确认。" : "语音识别由浏览器提供（部分浏览器可能使用在线服务）；朗读使用设备语音。消息通过 OpenClaw Gateway 处理。"}</p></div>
         {error && <div className="toast-error" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="关闭错误">×</button></div>}
       </section>
     </main>

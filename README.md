@@ -47,6 +47,7 @@ npm run dev
 - `POST /api/openclaw/sessions` — 新建会话
 - `GET /api/openclaw/history?sessionKey=...` — 会话历史
 - `POST /api/openclaw/messages` — 发送消息
-- `GET /api/openclaw/events?sessionKey=...` — SSE 实时事件
+- `POST /api/openclaw/abort` — 中止当前会话正在生成的回复
+- `GET /api/openclaw/events?sessionKey=...` — SSE 事件流：`projection` 为权威会话视图（后端用官方投影 reducer 维护），`connection.*` 为连接状态
 
 构建、类型检查和测试：`npm run build`、`npm run typecheck`、`npm test`。

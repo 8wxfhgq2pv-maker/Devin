@@ -150,7 +150,7 @@ export class GatewayOpenClawClient {
         role: "operator",
         scopes: ["operator.read", "operator.write"],
         clientName: "webchat",
-        clientDisplayName: "Devin OpenClaw UI",
+        clientDisplayName: "OpenClaw Web UI",
         clientVersion: "0.1.0",
         platform: process.platform,
         mode: "webchat",

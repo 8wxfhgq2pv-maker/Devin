@@ -28,5 +28,6 @@ export const api = {
   createSession: () => request<Session>("/api/openclaw/sessions", json({})),
   history: async (sessionKey: string) => (await request<{ messages: ChatMessage[] }>(`/api/openclaw/history?sessionKey=${encodeURIComponent(sessionKey)}`)).messages,
   send: (sessionKey: string, message: string, idempotencyKey: string) => request<{ runId?: string }>("/api/openclaw/messages", json({ sessionKey, message, idempotencyKey })),
+  abort: (sessionKey: string) => request<{ ok?: boolean }>("/api/openclaw/abort", json({ sessionKey })),
   eventsUrl: (sessionKey: string) => `/api/openclaw/events?sessionKey=${encodeURIComponent(sessionKey)}`,
 };

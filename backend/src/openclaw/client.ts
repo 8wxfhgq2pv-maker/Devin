@@ -216,7 +216,7 @@ export class GatewayOpenClawClient {
     if (phase === "final" || phase === "error" || phase === "aborted") void this.refreshSnapshot(sessionKey);
   }
 
-  /** Replaces the client-side "refetch history after a run" loop with one durable reconcile. */
+  /** Reconciles history when connected; failures are ignored so the live projection remains available. */
   private async refreshSnapshot(sessionKey: string): Promise<void> {
     if (!this.gateway || this.status.state !== "connected") return;
     try {
@@ -228,6 +228,7 @@ export class GatewayOpenClawClient {
     }
   }
 
+  /** Emits the projection now or debounces it for 60 ms, replacing any pending emission for the session. */
   private scheduleProjection(sessionKey: string, immediate: boolean): void {
     const pending = this.projectionTimers.get(sessionKey);
     if (pending) clearTimeout(pending);
@@ -268,6 +269,11 @@ export class GatewayOpenClawClient {
     });
   }
 
+  /**
+   * Requests up to `limit` history entries from the Gateway (default 80), reconciles and emits
+   * the projection, and returns its displayable messages, including any run overlays.
+   * Connection and Gateway request errors propagate to the caller.
+   */
   async getHistory(sessionKey: string, limit = HISTORY_LIMIT): Promise<OpenClawMessage[]> {
     const client = await this.readyClient();
     const result = await client.request<{ messages?: unknown[] }>("chat.history", { sessionKey, limit });
@@ -284,6 +290,11 @@ export class GatewayOpenClawClient {
     return { key, title: String(result.title ?? "新对话") };
   }
 
+  /**
+   * Publishes a pending user turn and sends it to the Gateway without waiting for the final reply.
+   * If the send request fails, marks the turn failed, emits the updated projection, and rethrows.
+   * Connection errors also propagate.
+   */
   async sendMessage(params: { sessionKey: string; message: string; idempotencyKey: string }): Promise<{ runId?: string }> {
     const client = await this.readyClient();
     this.projections.markSendPending(params.sessionKey, params);
@@ -298,6 +309,7 @@ export class GatewayOpenClawClient {
     }
   }
 
+  /** Requests an abort for the session, optionally targeting a nonempty run ID; connection and request errors propagate. */
   async abortRun(params: { sessionKey: string; runId?: string }): Promise<{ ok?: boolean }> {
     const client = await this.readyClient();
     return client.request<{ ok?: boolean }>("chat.abort", {

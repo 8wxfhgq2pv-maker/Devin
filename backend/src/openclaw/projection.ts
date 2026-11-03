@@ -29,6 +29,7 @@ interface SessionEntry {
   streams: Map<string, string>;
 }
 
+/** Returns strings unchanged, joins content parts with `[附件]` for parts without a text field, and returns an empty string for other values. */
 export function messageContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
@@ -78,12 +79,17 @@ export class SessionProjectionStore {
     return created;
   }
 
+  /** Reconciles a Gateway history snapshot with the session's existing projection. */
   ingestSnapshot(sessionKey: string, messages: readonly unknown[]): void {
     const entry = this.ensure(sessionKey);
     entry.projection = reduceSessionProjection(entry.projection, { type: "snapshotLoaded", messages, sessionKey });
   }
 
-  /** Feeds one Gateway `chat` run event; returns false when the event is not a run phase. */
+  /**
+   * Feeds a Gateway `chat` run event into the projection. Returns false if the run ID is
+   * missing or blank, the phase is unsupported, or the reducer rejects the event.
+   * Delta text is accumulated per run; `replace: true` starts it over.
+   */
   ingestRunEvent(sessionKey: string, payload: Record<string, unknown>): boolean {
     const runId = typeof payload.runId === "string" ? payload.runId.trim() : "";
     const phase = typeof payload.state === "string" ? payload.state : "";
@@ -132,6 +138,7 @@ export class SessionProjectionStore {
     });
   }
 
+  /** Marks an optimistic send as failed using its idempotency key; unknown sessions are ignored. */
   failSend(sessionKey: string, idempotencyKey: string): void {
     const entry = this.sessions.get(sessionKey);
     if (!entry) return;
@@ -142,6 +149,10 @@ export class SessionProjectionStore {
     this.sessions.delete(sessionKey);
   }
 
+  /**
+   * Returns displayable user and assistant messages, including eligible run overlays.
+   * `streaming` is true when a displayed run is streaming. Unknown sessions return an empty view.
+   */
   serialize(sessionKey: string): SerializedProjection {
     const entry = this.sessions.get(sessionKey);
     if (!entry) return { messages: [], streaming: false };

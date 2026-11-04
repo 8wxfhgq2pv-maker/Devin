@@ -90,7 +90,9 @@ export class GatewayOpenClawClient {
     this.statePath = config.statePath ?? join(process.cwd(), ".data", "openclaw-device.json");
     this.status = {
       state: config.url ? "disconnected" : "not_configured",
-      transport: "@openclaw/gateway-client@2026.8.1",
+      // No version here on purpose: the transport label is informational and a pinned version
+      // string silently goes stale on every dependency bump (see backend/package.json).
+      transport: "@openclaw/gateway-client",
       endpoint: redactEndpoint(config.url),
       message: config.url ? "Gateway 尚未连接。" : "请在后端配置 OPENCLAW_URL。",
     };

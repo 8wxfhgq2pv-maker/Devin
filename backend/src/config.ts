@@ -48,6 +48,7 @@ export const config = {
     password: requiredSecret(process.env.WEBUI_PASSWORD, "WEBUI_PASSWORD", 12),
     sessionSecret: requiredSecret(process.env.WEBUI_SESSION_SECRET, "WEBUI_SESSION_SECRET", 32),
     secureCookies: process.env.WEBUI_SECURE_COOKIE === "true",
+    proxySecret: process.env.WEBUI_PROXY_SECRET?.trim() ? requiredSecret(process.env.WEBUI_PROXY_SECRET, "WEBUI_PROXY_SECRET", 32) : undefined,
     publicOrigin: optionalPublicOrigin(process.env.WEBUI_PUBLIC_ORIGIN),
   },
   openclaw: {

@@ -4,10 +4,10 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { createSecurity } from "../src/security.js";
 
-async function fixture(publicOrigin?: string) {
+async function fixture(publicOrigin?: string, proxySecret?: string) {
   const app = express();
   app.use(express.json());
-  const security = createSecurity({ password: "correct horse battery", secret: "x".repeat(40), publicOrigin });
+  const security = createSecurity({ password: "correct horse battery", secret: "x".repeat(40), publicOrigin, proxySecret });
   app.use("/api", security.rateLimit);
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.use("/api/auth", security.protectMutation, security.authRoutes);
@@ -65,4 +65,32 @@ test("trusted public origin allows reverse-proxy Host rewriting without trusting
     headers: { origin: "https://attacker.example" },
   });
   assert.equal(denied.status, 403);
+});
+
+
+for (const proxySecret of [undefined, "p".repeat(32)]) {
+  test(`spoofed forwarded IPs cannot bypass login limits (proxy configured: ${Boolean(proxySecret)})`, async (t) => {
+    const { server, base } = await fixture(undefined, proxySecret);
+    t.after(() => server.close());
+    for (let i = 0; i < 9; i++) {
+      const result = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "x-forwarded-for": `192.0.2.${i}`, "x-webui-proxy-secret": "wrong" } });
+      assert.equal(result.status, i < 8 ? 401 : 429);
+    }
+  });
+}
+
+test("authenticated local proxy gets independent IP buckets and rejects forwarded chains", async (t) => {
+  const proxySecret = "p".repeat(32);
+  const { server, base } = await fixture(undefined, proxySecret);
+  t.after(() => server.close());
+  for (let i = 0; i < 9; i++) {
+    const result = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "x-forwarded-for": "192.0.2.1", "x-webui-proxy-secret": proxySecret } });
+    assert.equal(result.status, i < 8 ? 401 : 429);
+  }
+  const other = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "x-forwarded-for": "192.0.2.2", "x-webui-proxy-secret": proxySecret } });
+  assert.equal(other.status, 401);
+  for (let i = 0; i < 9; i++) {
+    const result = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "x-forwarded-for": `192.0.2.${i}, 127.0.0.1`, "x-webui-proxy-secret": proxySecret } });
+    assert.equal(result.status, i < 8 ? 401 : 429);
+  }
 });

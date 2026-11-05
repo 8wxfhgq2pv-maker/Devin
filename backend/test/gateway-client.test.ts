@@ -63,8 +63,32 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
   client.onEvent((event) => { if (event.event === "connection.restored") restored = true; });
   instances[0]?.close();
   assert.equal(client.getStatus().state, "disconnected");
+  await assert.rejects(client.connect(), /正在自动重连/);
+  await assert.rejects(client.listSessions(), /正在自动重连/);
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(instances.length, 1);
   assert.equal(client.getStatus().state, "connected");
   assert.equal(restored, true);
+});
+
+
+test("terminal reconnect pause survives the following close callback and permits manual retry", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "devin-gateway-paused-"));
+  const callbacks: Array<ConstructorParameters<typeof GatewayClient>[0]> = [];
+  const client = new GatewayOpenClawClient({ url: "ws://localhost:18789", statePath: join(dir, "device.json") }, (options) => {
+    callbacks.push(options);
+    return { start: () => options.onHelloOk?.({ server: {} } as Parameters<NonNullable<typeof options.onHelloOk>>[0]), stop() {}, async stopAndWait() {} } as unknown as GatewayClient;
+  });
+  t.after(async () => { await client.disconnect(); await rm(dir, { recursive: true, force: true }); });
+  await client.connect();
+  const events: string[] = [];
+  client.onEvent((event) => events.push(event.event));
+  callbacks[0]!.onReconnectPaused?.({ reason: "terminal auth failure" } as Parameters<NonNullable<(typeof callbacks)[number]["onReconnectPaused"]>>[0]);
+  callbacks[0]!.onClose?.(1008, "closed");
+  assert.equal(client.getStatus().state, "error");
+  assert.equal(client.getStatus().message, "terminal auth failure");
+  assert.deepEqual(events, ["connection.error"]);
+  await client.connect();
+  assert.equal(client.getStatus().state, "connected");
+  assert.equal(callbacks.length, 2);
 });

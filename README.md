@@ -38,7 +38,15 @@ npm run dev
 | `OPENCLAW_PASSWORD` | 仅在 Gateway 使用 password 鉴权时配置 |
 | `OPENCLAW_STATE_PATH` | 设备身份和签发 token 的持久化路径 |
 
-前端开发服务器和 `npm run preview -w frontend` 预览都会把 `/api` 代理到 `BACKEND_URL`（默认 `http://localhost:3001`）。
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:080c61e0050edf2423c5c52ba2425f196eccc33e7be85017ea50a813ae5e1382 -->
+
+前端开发服务器和 `npm run preview -w frontend` 预览都会把 `/api` 代理到 `BACKEND_URL`（默认 `http://localhost:3001`）。 两个代理都保留浏览器的 `Host`，以便默认 Origin 校验正常工作。
+
+按浏览器 IP 限流时，在启动后端和 Vite 的进程环境中设置相同的 `WEBUI_PROXY_SECRET`（至少 32 个随机字符；不要使用 `VITE_` 前缀或提交密钥）。例如在同一 shell 中导出该变量后执行 `npm run dev`；预览流程也需要向后端和 `npm run preview -w frontend` 提供该变量。Vite 会覆盖传入的转发 IP 和代理认证头，仅传递其 socket 对端 IP。后端只接受携带匹配密钥的 loopback 代理请求中的单个 IP；其他请求均使用 socket IP。未配置该密钥时，通过同一代理的请求共享限流桶。其他反向代理需在本机终止连接、覆盖这些头并安全注入该密钥；不能直接传递客户端提供的头。
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 后端仅绑定 loopback。Web UI 使用单用户密码登录、12 小时 HttpOnly/SameSite=Strict 签名会话 Cookie；写请求校验 Origin 并拒绝跨站请求，登录和 API 请求有按 IP 限流。示例密码与签名密钥均留空，必须替换为真实值后后端才会启动。使用反向代理远程部署时，必须启用 HTTPS、设置 `WEBUI_SECURE_COOKIE=true` 并在代理层配置额外访问控制。若代理会重写上游 `Host`，配置 `WEBUI_PUBLIC_ORIGIN` 为浏览器地址中的精确 scheme/host/port；服务只信任此显式配置，不使用客户端可伪造的 `X-Forwarded-Host`。不要直接将服务暴露到公网。远程 Gateway 应启用 TLS（`wss://`）。Gateway token 和会话密钥不得提交或放入前端环境变量。语音识别依赖浏览器 Web Speech API，支持情况因浏览器而异；识别服务由浏览器或操作系统提供，部分实现可能使用在线服务。朗读使用系统或浏览器提供的中文语音。
 

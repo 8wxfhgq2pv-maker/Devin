@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import type { NextFunction, Request, Response } from "express";
 
 const COOKIE = "devin_session";
@@ -26,11 +27,15 @@ function cookieValue(req: Request): string | undefined {
   }
   return undefined;
 }
-function clientKey(req: Request): string {
-  return req.ip || req.socket.remoteAddress || "unknown";
+function clientKey(req: Request, proxySecret?: string): string {
+  const peer = req.socket.remoteAddress;
+  const loopback = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+  const forwarded = req.get("x-forwarded-for");
+  if (loopback && proxySecret && safeEqual(req.get("x-webui-proxy-secret") ?? "", proxySecret) && forwarded && isIP(forwarded)) return forwarded;
+  return peer || "unknown";
 }
 
-export interface SecurityOptions { password: string; secret: string; secureCookies?: boolean; publicOrigin?: string }
+export interface SecurityOptions { password: string; secret: string; secureCookies?: boolean; publicOrigin?: string; proxySecret?: string }
 
 export function createSecurity(options: SecurityOptions) {
   const requests = new Map<string, Bucket>();
@@ -54,7 +59,7 @@ export function createSecurity(options: SecurityOptions) {
   const authRoutes = (req: Request, res: Response, next: NextFunction) => {
     if (req.path === "/login" && req.method === "POST") {
       const now = Date.now();
-      const key = clientKey(req);
+      const key = clientKey(req, options.proxySecret);
       let bucket = logins.get(key);
       if (!bucket || bucket.resetAt <= now) { bucket = { count: 0, resetAt: now + WINDOW_MS }; logins.set(key, bucket); }
       bucket.count++;
@@ -102,7 +107,7 @@ export function createSecurity(options: SecurityOptions) {
   };
   const rateLimit = (req: Request, res: Response, next: NextFunction) => {
     const now = Date.now();
-    const key = clientKey(req);
+    const key = clientKey(req, options.proxySecret);
     let bucket = requests.get(key);
     if (!bucket || bucket.resetAt <= now) { bucket = { count: 0, resetAt: now + WINDOW_MS }; requests.set(key, bucket); }
     bucket.count++;
@@ -110,5 +115,5 @@ export function createSecurity(options: SecurityOptions) {
     if (bucket.count > MAX_REQUESTS) { res.setHeader("Retry-After", String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)))); res.status(429).json({ error: "请求过于频繁，请稍后重试。" }); return; }
     next();
   };
-  return { authRoutes, requireAuth, protectMutation, rateLimit };
+  return { isAuthenticated, authRoutes, requireAuth, protectMutation, rateLimit };
 }

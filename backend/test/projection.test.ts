@@ -60,6 +60,17 @@ test("a later snapshot does not duplicate the final message", () => {
   assert.deepEqual(reconciled.messages.map((row) => row.content), ["问", "正式回复"]);
 });
 
+test("replayed final run events do not duplicate assistant messages", () => {
+  const store = new SessionProjectionStore();
+  store.ingestSnapshot(KEY, [{ role: "user", content: "问", id: "m1" }]);
+  const finalEvent = { runId: "run-replay", state: "final", message: { role: "assistant", content: "唯一回复", id: "assistant-1" } };
+  assert.equal(store.ingestRunEvent(KEY, finalEvent), true);
+  assert.equal(store.ingestRunEvent(KEY, finalEvent), true);
+  const assistantMessages = store.serialize(KEY).messages.filter((message) => message.role === "assistant");
+  assert.equal(assistantMessages.length, 1);
+  assert.equal(assistantMessages[0]?.content, "唯一回复");
+});
+
 test("the optimistic user turn is replaced by the durable row, not duplicated", () => {
   const store = new SessionProjectionStore();
   store.ingestSnapshot(KEY, [{ role: "user", content: "第一句", id: "m1" }]);

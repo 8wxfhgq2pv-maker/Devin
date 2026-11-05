@@ -24,8 +24,19 @@ function optionalUrl(value: string | undefined, name: string): string | undefine
   return input;
 }
 
+function requiredSecret(value: string | undefined, name: string, minLength: number): string {
+  const input = value?.trim() ?? "";
+  if (input.length < minLength) throw new Error(`${name} must be set and at least ${minLength} characters long`);
+  return input;
+}
+
 export const config = {
   port: positivePort(process.env.PORT, 3001),
+  webui: {
+    password: requiredSecret(process.env.WEBUI_PASSWORD, "WEBUI_PASSWORD", 12),
+    sessionSecret: requiredSecret(process.env.WEBUI_SESSION_SECRET, "WEBUI_SESSION_SECRET", 32),
+    secureCookies: process.env.WEBUI_SECURE_COOKIE === "true",
+  },
   openclaw: {
     url: optionalUrl(process.env.OPENCLAW_URL, "OPENCLAW_URL"),
     token: process.env.OPENCLAW_TOKEN?.trim() || undefined,

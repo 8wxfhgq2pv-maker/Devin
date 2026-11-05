@@ -22,6 +22,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 export const api = {
+  session: () => request<{ authenticated: boolean }>("/api/auth/session"),
+  login: (password: string) => request<{ ok: true }>("/api/auth/login", json({ password })),
+  logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   status: () => request<OpenClawStatus>("/api/openclaw/status"),
   connect: () => request<OpenClawStatus>("/api/openclaw/connect", { method: "POST" }),
   sessions: async () => (await request<{ sessions: Session[] }>("/api/openclaw/sessions")).sessions,

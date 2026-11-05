@@ -33,6 +33,10 @@ function clockLabel(timestamp = Date.now()) {
 }
 
 export default function App() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
   const [status, setStatus] = useState<OpenClawStatus | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeKey, setActiveKey] = useState("");
@@ -139,12 +143,11 @@ export default function App() {
   }, []);
 
   useEffect(() => { activeKeyRef.current = activeKey; }, [activeKey]);
-  useEffect(() => { void api.status().then(setStatus).catch((err) => setError(String(err))); }, []);
   useEffect(() => { if (status?.state === "connected") void loadSessions(); }, [status?.state, loadSessions]);
   useEffect(() => { if (activeKey && status?.state === "connected") void loadHistory(activeKey); }, [activeKey, status?.state, loadHistory]);
 
   useEffect(() => {
-    if (!activeKey || status?.state !== "connected") return;
+    if (!activeKey) return;
     const source = new EventSource(api.eventsUrl(activeKey));
     // The backend owns the session projection, so the browser renders whatever it last published
     // instead of merging deltas itself.
@@ -165,12 +168,17 @@ export default function App() {
     };
     source.addEventListener("projection", handleProjection as EventListener);
     source.addEventListener("connection.closed", () => setStatus((current) => current ? { ...current, state: "disconnected", message: "Gateway 连接已断开。" } : current));
+    source.addEventListener("connection.restored", (event) => {
+      try { setStatus(JSON.parse((event as MessageEvent<string>).data) as OpenClawStatus); }
+      catch { setStatus((current) => current ? { ...current, state: "connected", message: "已重新连接 OpenClaw Gateway。" } : current); }
+    });
+    source.onopen = () => { if (status?.state === "connected") void loadHistory(activeKey); };
     source.onerror = () => {
       // EventSource retries transient failures automatically; keep Gateway state connected
       // so this effect does not close the stream before its retry can succeed.
     };
     return () => source.close();
-  }, [activeKey, status?.state, readAloud, speakText]);
+  }, [activeKey, status?.state, readAloud, speakText, loadHistory]);
 
   const selectSession = (key: string) => { setActiveKey(key); setSidebarOpen(false); };
   const newConversation = useCallback(async () => {
@@ -218,6 +226,39 @@ export default function App() {
     try { await api.abort(activeKey); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   };
+
+  const submitLogin = async (event: FormEvent) => {
+    event.preventDefault();
+    setLoggingIn(true); setLoginError("");
+    try {
+      await api.login(password);
+      setPassword(""); setAuthenticated(true);
+    } catch (err) { setLoginError(err instanceof Error ? err.message : String(err)); }
+    finally { setLoggingIn(false); }
+  };
+
+  useEffect(() => {
+    void api.session().then((result) => setAuthenticated(result.authenticated)).catch(() => setAuthenticated(false));
+  }, []);
+  useEffect(() => {
+    if (authenticated) void api.status().then(setStatus).catch((err) => setError(String(err)));
+  }, [authenticated]);
+
+  if (authenticated === null) return <main className="auth-shell"><p>正在验证登录状态…</p></main>;
+  if (!authenticated) return (
+    <main className="auth-shell">
+      <form className="auth-card" onSubmit={(event) => void submitLogin(event)}>
+        <div className="welcome-mark">✳</div>
+        <p className="eyebrow">OPENCLAW WORKSPACE</p>
+        <h1>登录控制台</h1>
+        <p className="muted">输入部署时配置的 Web UI 密码继续。</p>
+        <label htmlFor="webui-password">密码</label>
+        <input id="webui-password" type="password" autoComplete="current-password" required minLength={1} value={password} onChange={(event) => setPassword(event.target.value)} />
+        {loginError && <p className="auth-error" role="alert">{loginError}</p>}
+        <button className="connect-button" type="submit" disabled={loggingIn}>{loggingIn ? "正在登录…" : "登录"}</button>
+      </form>
+    </main>
+  );
 
   return (
     <main className="app-shell">

@@ -85,8 +85,14 @@ export class GatewayOpenClawClient {
   private readonly projectionTimers = new Map<string, NodeJS.Timeout>();
   private connectPromise?: Promise<void>;
   private readonly statePath: string;
+  private reconnectTimer?: NodeJS.Timeout;
+  private reconnectAttempt = 0;
+  private shuttingDown = false;
 
-  constructor(private readonly config: OpenClawClientConfig) {
+  constructor(
+    private readonly config: OpenClawClientConfig,
+    private readonly gatewayFactory: (options: ConstructorParameters<typeof GatewayClient>[0]) => GatewayClient = (options) => new GatewayClient(options),
+  ) {
     this.statePath = config.statePath ?? join(process.cwd(), ".data", "openclaw-device.json");
     this.status = {
       state: config.url ? "disconnected" : "not_configured",
@@ -111,6 +117,8 @@ export class GatewayOpenClawClient {
 
   async connect(): Promise<void> {
     if (!this.config.url) throw new OpenClawNotImplementedError("connect");
+    this.shuttingDown = false;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
     if (this.status.state === "connected") return;
     if (this.connectPromise) return this.connectPromise;
     this.status = { ...this.status, state: "connecting", message: "正在连接 OpenClaw Gateway…" };
@@ -152,7 +160,7 @@ export class GatewayOpenClawClient {
         logDebug: () => {},
         logError: (message) => { if (!settled) done(new Error(message)); },
       };
-      this.gateway = new GatewayClient({
+      this.gateway = this.gatewayFactory({
         url: this.config.url,
         token: this.config.token,
         password: this.config.password,
@@ -168,6 +176,8 @@ export class GatewayOpenClawClient {
         deviceIdentity: auth.identity,
         hostDeps,
         onHelloOk: (hello) => {
+          const wasRecovering = this.reconnectAttempt > 0 || this.status.state === "disconnected" || this.status.state === "error";
+          this.reconnectAttempt = 0;
           this.status = {
             state: "connected",
             transport: "Gateway WebSocket",
@@ -175,6 +185,7 @@ export class GatewayOpenClawClient {
             serverVersion: hello.server?.version,
             message: "已连接 OpenClaw Gateway。",
           };
+          if (wasRecovering) this.emit({ event: "connection.restored", payload: this.getStatus() });
           done();
         },
         onConnectError: (error) => {
@@ -185,6 +196,7 @@ export class GatewayOpenClawClient {
         onClose: (_code, reason) => {
           this.status = { ...this.status, state: "disconnected", message: reason || "Gateway 连接已断开。" };
           this.emit({ event: "connection.closed", payload: { reason } });
+          this.scheduleReconnect();
         },
         onEvent: (event) => {
           this.ingestGatewayEvent({ event: event.event, payload: event.payload });
@@ -251,6 +263,17 @@ export class GatewayOpenClawClient {
   }
 
   private emit(event: OpenClawEvent): void { for (const listener of this.listeners) listener(event); }
+  private scheduleReconnect(): void {
+    if (this.shuttingDown || !this.config.url || this.reconnectTimer) return;
+    const delay = Math.min(30_000, 1_000 * 2 ** Math.min(this.reconnectAttempt, 5));
+    this.reconnectAttempt++;
+    this.status = { ...this.status, state: "disconnected", message: `Gateway 已断开，将在 ${Math.ceil(delay / 1000)} 秒后自动重连。` };
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connect().catch(() => this.scheduleReconnect());
+    }, delay);
+  }
+
   private async readyClient(): Promise<GatewayClient> {
     if (!this.gateway || this.status.state !== "connected") await this.connect();
     if (!this.gateway || this.status.state !== "connected") throw new Error(this.status.message ?? "Gateway is not connected");
@@ -322,6 +345,8 @@ export class GatewayOpenClawClient {
   }
 
   async disconnect(): Promise<void> {
+    this.shuttingDown = true;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
     for (const timer of this.projectionTimers.values()) clearTimeout(timer);
     this.projectionTimers.clear();
     await this.gateway?.stopAndWait({ timeoutMs: 1000 });

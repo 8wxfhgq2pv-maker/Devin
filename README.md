@@ -18,7 +18,7 @@
 ```bash
 npm install
 cp backend/.env.example backend/.env
-# 编辑 backend/.env，设置 Gateway URL 和 token 或 password
+# 编辑 backend/.env：必须设置 Web UI 登录密码和随机会话密钥，并设置 Gateway URL/凭据
 npm run dev
 ```
 
@@ -29,6 +29,9 @@ npm run dev
 | 变量 | 用途 |
 | --- | --- |
 | `PORT` | 后端监听端口，默认 `3001` |
+| `WEBUI_PASSWORD` | 必填，单用户 Web UI 登录密码，至少 12 个字符 |
+| `WEBUI_SESSION_SECRET` | 必填，HMAC 会话签名密钥，至少 32 个字符；可用 `openssl rand -base64 48` 生成 |
+| `WEBUI_SECURE_COOKIE` | HTTPS 部署设为 `true`，启用 Secure Cookie |
 | `OPENCLAW_URL` | Gateway WebSocket 地址，例如 `ws://127.0.0.1:18789` 或远程 `wss://...` |
 | `OPENCLAW_TOKEN` | Gateway token（推荐） |
 | `OPENCLAW_PASSWORD` | 仅在 Gateway 使用 password 鉴权时配置 |
@@ -36,11 +39,14 @@ npm run dev
 
 前端开发服务器和 `npm run preview -w frontend` 预览都会把 `/api` 代理到 `BACKEND_URL`（默认 `http://localhost:3001`）。
 
-仅在 loopback 或受信任私有网络中使用。远程 Gateway 应启用 TLS（`wss://`）。不要将 token 提交到仓库或放入前端环境变量。当前本地 Web UI 尚未提供用户登录；不要直接暴露到公网。语音识别依赖浏览器 Web Speech API，支持情况因浏览器而异；识别服务由浏览器或操作系统提供，部分实现可能使用在线服务。朗读使用系统或浏览器提供的中文语音。
+后端仅绑定 loopback。Web UI 使用单用户密码登录、12 小时 HttpOnly/SameSite=Strict 签名会话 Cookie；写请求校验 Origin 并拒绝跨站请求，登录和 API 请求有按 IP 限流。使用反向代理远程部署时，必须启用 HTTPS、设置 `WEBUI_SECURE_COOKIE=true` 并在代理层配置额外访问控制；不要直接将服务暴露到公网。远程 Gateway 应启用 TLS（`wss://`）。Gateway token 和会话密钥不得提交或放入前端环境变量。语音识别依赖浏览器 Web Speech API，支持情况因浏览器而异；识别服务由浏览器或操作系统提供，部分实现可能使用在线服务。朗读使用系统或浏览器提供的中文语音。
 
 ## API
 
 - `GET /api/health` — 后端存活检查
+- `POST /api/auth/login` — 使用 `WEBUI_PASSWORD` 登录并设置会话 Cookie
+- `GET /api/auth/session` — 检查当前会话
+- `POST /api/auth/logout` — 清除当前会话
 - `GET /api/openclaw/status` — Gateway 连接状态
 - `POST /api/openclaw/connect` — 建立 Gateway 连接（设备配对可能需要人工批准）
 - `GET /api/openclaw/sessions` — 会话列表

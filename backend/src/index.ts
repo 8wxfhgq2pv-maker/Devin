@@ -7,7 +7,7 @@ import { createSecurity } from "./security.js";
 
 const app = express();
 const openclaw = createOpenClawClient(config.openclaw);
-const security = createSecurity({ password: config.webui.password, secret: config.webui.sessionSecret, secureCookies: config.webui.secureCookies });
+const security = createSecurity({ password: config.webui.password, secret: config.webui.sessionSecret, secureCookies: config.webui.secureCookies, publicOrigin: config.webui.publicOrigin });
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));

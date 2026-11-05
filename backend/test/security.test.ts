@@ -4,10 +4,10 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { createSecurity } from "../src/security.js";
 
-async function fixture() {
+async function fixture(publicOrigin?: string) {
   const app = express();
   app.use(express.json());
-  const security = createSecurity({ password: "correct horse battery", secret: "x".repeat(40) });
+  const security = createSecurity({ password: "correct horse battery", secret: "x".repeat(40), publicOrigin });
   app.use("/api", security.rateLimit);
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
   app.use("/api/auth", security.protectMutation, security.authRoutes);
@@ -49,4 +49,20 @@ test("auth protects API, signs sessions, rejects cross-origin writes, and logs o
   assert.equal(logout.status, 200);
   const afterLogout = await fetch(`${base}/api/private`, { headers: { cookie: sessionCookie } });
   assert.equal(afterLogout.status, 401);
+});
+
+test("trusted public origin allows reverse-proxy Host rewriting without trusting arbitrary origins", async (t) => {
+  const { server, base } = await fixture("https://console.example");
+  t.after(() => server.close());
+  const allowed = await fetch(`${base}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://console.example" },
+    body: JSON.stringify({ password: "correct horse battery" }),
+  });
+  assert.equal(allowed.status, 200);
+  const denied = await fetch(`${base}/api/auth/logout`, {
+    method: "POST",
+    headers: { origin: "https://attacker.example" },
+  });
+  assert.equal(denied.status, 403);
 });

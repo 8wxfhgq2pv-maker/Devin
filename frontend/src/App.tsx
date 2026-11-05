@@ -167,6 +167,12 @@ export default function App() {
       }
     };
     source.addEventListener("projection", handleProjection as EventListener);
+    source.addEventListener("ready", (event) => {
+      try {
+        const connected = (JSON.parse((event as MessageEvent<string>).data) as { connected?: boolean }).connected === true;
+        setStatus((current) => current ? { ...current, state: connected ? "connected" : "disconnected", message: connected ? "已连接 OpenClaw Gateway。" : "Gateway 连接已断开，正在恢复…" } : current);
+      } catch { /* Ignore malformed status events. */ }
+    });
     source.addEventListener("connection.closed", () => setStatus((current) => current ? { ...current, state: "disconnected", message: "Gateway 连接已断开。" } : current));
     source.addEventListener("connection.restored", (event) => {
       try { setStatus(JSON.parse((event as MessageEvent<string>).data) as OpenClawStatus); }
@@ -241,6 +247,26 @@ export default function App() {
     void api.session().then((result) => setAuthenticated(result.authenticated)).catch(() => setAuthenticated(false));
   }, []);
   useEffect(() => {
+    const handleUnauthorized = () => {
+      setAuthenticated(false);
+      setStatus(null); setSessions([]); setActiveKey(""); setMessages([]); setDraft("");
+      setStreaming(false); streamingRef.current = false; setBusy(false); setLoadingHistory(false); setError("");
+    };
+    window.addEventListener("auth:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
+  }, []);
+  useEffect(() => {
+    if (!authenticated) return;
+    const checkSession = async () => {
+      try {
+        const result = await api.session();
+        if (!result.authenticated) window.dispatchEvent(new Event("auth:unauthorized"));
+      } catch { window.dispatchEvent(new Event("auth:unauthorized")); }
+    };
+    const timer = window.setInterval(() => { void checkSession(); }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [authenticated]);
+  useEffect(() => {
     if (authenticated) void api.status().then(setStatus).catch((err) => setError(String(err)));
   }, [authenticated]);
 
@@ -274,7 +300,7 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="connection-card"><span className={`connection-dot ${status?.state === "connected" ? "connected" : ""}`} /><span><strong>{status ? stateLabels[status.state] : "正在检查"}</strong><small>{status?.endpoint ?? "OpenClaw Gateway"}</small></span><button className="more-button" aria-label="刷新状态" onClick={() => void connect()}>↻</button></div>
-          <button className="profile-button"><span className="avatar">D</span><span className="profile-copy"><strong>本地工作区</strong><small>OpenClaw 控制台</small></span><span className="more-button">···</span></button>
+          <button className="profile-button" aria-label="退出登录" onClick={() => { void api.logout().catch(() => undefined).finally(() => window.dispatchEvent(new Event("auth:unauthorized"))); }}><span className="avatar">D</span><span className="profile-copy"><strong>本地工作区</strong><small>点击退出登录</small></span><span className="more-button">↗</span></button>
         </div>
       </aside>
 

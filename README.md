@@ -32,6 +32,7 @@ npm run dev
 | `WEBUI_PASSWORD` | 必填，单用户 Web UI 登录密码，至少 12 个字符 |
 | `WEBUI_SESSION_SECRET` | 必填，HMAC 会话签名密钥，至少 32 个字符；可用 `openssl rand -base64 48` 生成 |
 | `WEBUI_SECURE_COOKIE` | HTTPS 部署设为 `true`，启用 Secure Cookie |
+| `WEBUI_PUBLIC_ORIGIN` | 可选，精确的公开站点 origin（例如 `https://console.example`）；当代理把上游 `Host` 改为后端地址时必须设置 |
 | `OPENCLAW_URL` | Gateway WebSocket 地址，例如 `ws://127.0.0.1:18789` 或远程 `wss://...` |
 | `OPENCLAW_TOKEN` | Gateway token（推荐） |
 | `OPENCLAW_PASSWORD` | 仅在 Gateway 使用 password 鉴权时配置 |
@@ -39,7 +40,7 @@ npm run dev
 
 前端开发服务器和 `npm run preview -w frontend` 预览都会把 `/api` 代理到 `BACKEND_URL`（默认 `http://localhost:3001`）。
 
-后端仅绑定 loopback。Web UI 使用单用户密码登录、12 小时 HttpOnly/SameSite=Strict 签名会话 Cookie；写请求校验 Origin 并拒绝跨站请求，登录和 API 请求有按 IP 限流。使用反向代理远程部署时，必须启用 HTTPS、设置 `WEBUI_SECURE_COOKIE=true` 并在代理层配置额外访问控制；不要直接将服务暴露到公网。远程 Gateway 应启用 TLS（`wss://`）。Gateway token 和会话密钥不得提交或放入前端环境变量。语音识别依赖浏览器 Web Speech API，支持情况因浏览器而异；识别服务由浏览器或操作系统提供，部分实现可能使用在线服务。朗读使用系统或浏览器提供的中文语音。
+后端仅绑定 loopback。Web UI 使用单用户密码登录、12 小时 HttpOnly/SameSite=Strict 签名会话 Cookie；写请求校验 Origin 并拒绝跨站请求，登录和 API 请求有按 IP 限流。示例密码与签名密钥均留空，必须替换为真实值后后端才会启动。使用反向代理远程部署时，必须启用 HTTPS、设置 `WEBUI_SECURE_COOKIE=true` 并在代理层配置额外访问控制。若代理会重写上游 `Host`，配置 `WEBUI_PUBLIC_ORIGIN` 为浏览器地址中的精确 scheme/host/port；服务只信任此显式配置，不使用客户端可伪造的 `X-Forwarded-Host`。不要直接将服务暴露到公网。远程 Gateway 应启用 TLS（`wss://`）。Gateway token 和会话密钥不得提交或放入前端环境变量。语音识别依赖浏览器 Web Speech API，支持情况因浏览器而异；识别服务由浏览器或操作系统提供，部分实现可能使用在线服务。朗读使用系统或浏览器提供的中文语音。
 
 ## API
 

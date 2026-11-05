@@ -3,7 +3,7 @@
 > 调研日期：2026-10-25。资料来源：上游仓库 [openclaw/openclaw](https://github.com/openclaw/openclaw)（commit `dd60cbc`，2026-10-24，版本 `2026.10.7`）中的 `docs/` 目录，以及官方文档站 <https://docs.openclaw.ai>。
 > 标注说明：**[已核实]** 直接来自官方文档/源码；**[推断]** 为基于资料的判断；**[待确认]** 需要用户补充。
 
-> **仓库状态更新（2026-11-04）：** 本仓库当前已实际采用方案 A：Node 后端使用 `@openclaw/gateway-client` 与 `@openclaw/gateway-protocol`，两者精确锁定为 `2026.10.10`（见 `backend/package.json`），运行时协议版本由依赖导出。后端已有 Ed25519 设备身份持久化、会话/历史、发送消息与 SSE 投影。以下旧调研中关于“当前仍是 Placeholder”“尚未选择接入方式”的文字已由本状态说明取代；协议与 Gateway 兼容性仍需按该锁定依赖进行集成测试。
+> **仓库状态更新（2026-11-04）：** 本仓库当前已实际采用方案 A：Node 后端使用 `@openclaw/gateway-client` 与 `@openclaw/gateway-protocol`，两者精确锁定为 `2026.10.10`（见 `backend/package.json`），运行时协议版本由依赖导出。后端已有 Ed25519 设备身份持久化、会话/历史、发送消息与 SSE 投影。以下旧调研中关于“当前仍是 Placeholder”“尚未选择接入方式”的文字已由本状态说明取代；协议与 Gateway 兼容性仍需按该锁定依赖进行集成测试。Gateway WebSocket 自动重连由 `GatewayClient` 自身的 retry engine 实现；业务层监听 close/restore 状态即可，不应在关闭回调中创建第二个并行客户端。
 
 ## 1. OpenClaw 是什么
 

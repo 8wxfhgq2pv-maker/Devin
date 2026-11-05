@@ -27,7 +27,15 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
         return {} as T;
       },
     };
-    instances.push({ sent, emit: (event) => options.onEvent?.(event), close: () => options.onClose?.(1006, "mock network drop") });
+    instances.push({
+      sent,
+      emit: (event) => options.onEvent?.(event),
+      close: () => {
+        options.onClose?.(1006, "mock network drop");
+        // GatewayClient owns reconnection and reuses this instance/options.
+        setTimeout(() => options.onHelloOk?.({ server: { version: "mock-2026.10.10" } } as Parameters<NonNullable<typeof options.onHelloOk>>[0]), 20);
+      },
+    });
     return instance as unknown as GatewayClient;
   }) as (options: ConstructorParameters<typeof GatewayClient>[0]) => GatewayClient;
   const client = new GatewayOpenClawClient({ url: "ws://127.0.0.1:18789", statePath: join(dir, "device.json") }, factory);
@@ -55,8 +63,8 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
   client.onEvent((event) => { if (event.event === "connection.restored") restored = true; });
   instances[0]?.close();
   assert.equal(client.getStatus().state, "disconnected");
-  await new Promise((resolve) => setTimeout(resolve, 1_150));
-  assert.equal(instances.length, 2);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(instances.length, 1);
   assert.equal(client.getStatus().state, "connected");
   assert.equal(restored, true);
 });

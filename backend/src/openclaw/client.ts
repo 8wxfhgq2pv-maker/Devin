@@ -85,8 +85,7 @@ export class GatewayOpenClawClient {
   private readonly projectionTimers = new Map<string, NodeJS.Timeout>();
   private connectPromise?: Promise<void>;
   private readonly statePath: string;
-  private reconnectTimer?: NodeJS.Timeout;
-  private reconnectAttempt = 0;
+  private reconnecting = false;
   private shuttingDown = false;
 
   constructor(
@@ -118,9 +117,10 @@ export class GatewayOpenClawClient {
   async connect(): Promise<void> {
     if (!this.config.url) throw new OpenClawNotImplementedError("connect");
     this.shuttingDown = false;
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
     if (this.status.state === "connected") return;
+    if (this.gateway && this.reconnecting) return;
     if (this.connectPromise) return this.connectPromise;
+    if (this.gateway) { this.gateway.stop(); this.gateway = undefined; }
     this.status = { ...this.status, state: "connecting", message: "正在连接 OpenClaw Gateway…" };
     this.connectPromise = this.startGateway();
     try { await this.connectPromise; }
@@ -176,8 +176,8 @@ export class GatewayOpenClawClient {
         deviceIdentity: auth.identity,
         hostDeps,
         onHelloOk: (hello) => {
-          const wasRecovering = this.reconnectAttempt > 0 || this.status.state === "disconnected" || this.status.state === "error";
-          this.reconnectAttempt = 0;
+          const wasRecovering = this.reconnecting || this.status.state === "disconnected" || this.status.state === "error";
+          this.reconnecting = false;
           this.status = {
             state: "connected",
             transport: "Gateway WebSocket",
@@ -193,10 +193,17 @@ export class GatewayOpenClawClient {
           done(error);
           this.emit({ event: "connection.error", payload: { message: error.message } });
         },
+        onReconnectPaused: (info) => {
+          this.reconnecting = false;
+          this.status = { ...this.status, state: "error", message: info.reason || "Gateway 自动重连已暂停，请手动重试。" };
+          this.gateway = undefined;
+          this.emit({ event: "connection.error", payload: { message: this.status.message } });
+        },
         onClose: (_code, reason) => {
+          if (this.shuttingDown) return;
+          this.reconnecting = true;
           this.status = { ...this.status, state: "disconnected", message: reason || "Gateway 连接已断开。" };
           this.emit({ event: "connection.closed", payload: { reason } });
-          this.scheduleReconnect();
         },
         onEvent: (event) => {
           this.ingestGatewayEvent({ event: event.event, payload: event.payload });
@@ -263,17 +270,6 @@ export class GatewayOpenClawClient {
   }
 
   private emit(event: OpenClawEvent): void { for (const listener of this.listeners) listener(event); }
-  private scheduleReconnect(): void {
-    if (this.shuttingDown || !this.config.url || this.reconnectTimer) return;
-    const delay = Math.min(30_000, 1_000 * 2 ** Math.min(this.reconnectAttempt, 5));
-    this.reconnectAttempt++;
-    this.status = { ...this.status, state: "disconnected", message: `Gateway 已断开，将在 ${Math.ceil(delay / 1000)} 秒后自动重连。` };
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = undefined;
-      void this.connect().catch(() => this.scheduleReconnect());
-    }, delay);
-  }
-
   private async readyClient(): Promise<GatewayClient> {
     if (!this.gateway || this.status.state !== "connected") await this.connect();
     if (!this.gateway || this.status.state !== "connected") throw new Error(this.status.message ?? "Gateway is not connected");
@@ -346,7 +342,7 @@ export class GatewayOpenClawClient {
 
   async disconnect(): Promise<void> {
     this.shuttingDown = true;
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined; }
+    this.reconnecting = false;
     for (const timer of this.projectionTimers.values()) clearTimeout(timer);
     this.projectionTimers.clear();
     await this.gateway?.stopAndWait({ timeoutMs: 1000 });

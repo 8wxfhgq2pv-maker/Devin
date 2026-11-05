@@ -30,7 +30,7 @@ function clientKey(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-export interface SecurityOptions { password: string; secret: string; secureCookies?: boolean }
+export interface SecurityOptions { password: string; secret: string; secureCookies?: boolean; publicOrigin?: string }
 
 export function createSecurity(options: SecurityOptions) {
   const requests = new Map<string, Bucket>();
@@ -91,7 +91,11 @@ export function createSecurity(options: SecurityOptions) {
     const host = req.get("host");
     if (origin) {
       try {
-        if (new URL(origin).host !== host) { res.status(403).json({ error: "请求来源校验失败。" }); return; }
+        const expectedOrigin = options.publicOrigin ? new URL(options.publicOrigin).origin : undefined;
+        const actualOrigin = new URL(origin).origin;
+        if (options.publicOrigin ? actualOrigin !== expectedOrigin : new URL(origin).host !== host) {
+          res.status(403).json({ error: "请求来源校验失败。" }); return;
+        }
       } catch { res.status(403).json({ error: "请求来源无效。" }); return; }
     }
     next();

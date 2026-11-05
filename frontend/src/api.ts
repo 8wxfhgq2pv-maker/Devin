@@ -14,6 +14,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   catch { throw new Error("无法连接后端，请确认本地后端服务正在运行。"); }
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("auth:unauthorized"));
     const error = body && typeof body === "object" && "error" in body ? String((body as { error: unknown }).error) : `${res.status} ${res.statusText}`;
     throw new Error(error);
   }

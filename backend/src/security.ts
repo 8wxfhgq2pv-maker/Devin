@@ -63,6 +63,7 @@ export function createSecurity(options: SecurityOptions) {
       let bucket = logins.get(key);
       if (!bucket || bucket.resetAt <= now) { bucket = { count: 0, resetAt: now + WINDOW_MS }; logins.set(key, bucket); }
       bucket.count++;
+      if (logins.size > 5000) for (const [id, item] of logins) if (item.resetAt <= now) logins.delete(id);
       if (bucket.count > MAX_LOGIN_ATTEMPTS) { res.setHeader("Retry-After", "60"); res.status(429).json({ error: "登录尝试过多，请稍后重试。" }); return; }
       const supplied = req.body && typeof req.body.password === "string" ? req.body.password : "";
       if (!safeEqual(supplied, options.password)) { res.status(401).json({ error: "密码错误。" }); return; }

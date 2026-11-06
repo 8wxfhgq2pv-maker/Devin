@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import { once } from "node:events";
 import { test } from "node:test";
 import { createSecurity } from "../src/security.js";
@@ -93,4 +93,43 @@ test("authenticated local proxy gets independent IP buckets and rejects forwarde
     const result = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "x-forwarded-for": `192.0.2.${i}, 127.0.0.1`, "x-webui-proxy-secret": proxySecret } });
     assert.equal(result.status, i < 8 ? 401 : 429);
   }
+});
+
+
+test("login bucket cleanup prunes expired entries and preserves active attempt counts", (t) => {
+  const proxySecret = "p".repeat(32);
+  const security = createSecurity({ password: "correct horse battery", secret: "x".repeat(40), proxySecret });
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+  const deleted: unknown[] = [];
+  const originalDelete = Map.prototype.delete;
+  t.mock.method(Map.prototype, "delete", function (this: Map<unknown, unknown>, key: unknown) {
+    deleted.push(key);
+    return originalDelete.call(this, key);
+  });
+  const login = (ip: string) => {
+    let status = 200;
+    const req = {
+      path: "/login", method: "POST", body: { password: "wrong" },
+      socket: { remoteAddress: "127.0.0.1" },
+      get: (name: string) => name === "x-forwarded-for" ? ip : name === "x-webui-proxy-secret" ? proxySecret : undefined,
+    } as unknown as Request;
+    const res = {
+      status(code: number) { status = code; return this; },
+      json() {}, setHeader() {},
+    } as unknown as Response;
+    security.authRoutes(req, res, () => assert.fail("login should be handled"));
+    return status;
+  };
+  for (let i = 0; i < 5000; i++) assert.equal(login(`192.0.${Math.floor(i / 256)}.${i % 256}`), 401);
+  now += 30_000;
+  for (let i = 0; i < 8; i++) assert.equal(login("198.51.100.1"), 401);
+  assert.equal(deleted.length, 0);
+  now += 30_000; // Expiry boundary: resetAt <= now, while the active bucket has time left.
+  assert.equal(login("198.51.100.2"), 401);
+  assert.equal(deleted.length, 5000);
+  assert.ok(deleted.includes("192.0.0.0"));
+  assert.ok(!deleted.includes("198.51.100.1"));
+  assert.equal(login("198.51.100.1"), 429);
+  assert.equal(login("192.0.0.0"), 401);
 });

@@ -14,6 +14,7 @@ for (const invalidate of ["logout", "expiry"]) {
     const client = {
       getStatus: () => ({ state: "connected" }),
       getProjection: () => ({ messages: [] }),
+      getToolTimeline: () => [],
       onEvent: (callback: OpenClawEventListener) => { listener = callback; return () => { unsubscribed = true; }; },
     } as unknown as GatewayOpenClawClient;
     const app = express();

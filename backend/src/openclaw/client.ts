@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version";
 import { SessionProjectionStore, type ProjectionMessage, type SerializedProjection } from "./projection.js";
+import { reduceToolActivity, type ToolActivity } from "./tool-timeline.js";
 
 export type OpenClawConnectionState = "not_configured" | "disconnected" | "connecting" | "connected" | "error";
 export interface OpenClawStatus {
@@ -29,6 +30,7 @@ export interface OpenClawClientConfig { url?: string; token?: string; password?:
 
 const HISTORY_LIMIT = 80;
 const PROJECTION_FLUSH_MS = 60;
+const MAX_TOOL_TIMELINE_SESSIONS = 32;
 
 export function redactEndpoint(url: string | undefined): string | undefined {
   if (!url) return undefined;
@@ -82,6 +84,7 @@ export class GatewayOpenClawClient {
   private status: OpenClawStatus;
   private readonly listeners = new Set<OpenClawEventListener>();
   private readonly projections = new SessionProjectionStore();
+  private readonly toolActivities = new Map<string, ToolActivity[]>();
   private readonly projectionTimers = new Map<string, NodeJS.Timeout>();
   private connectPromise?: Promise<void>;
   private readonly statePath: string;
@@ -112,6 +115,10 @@ export class GatewayOpenClawClient {
   /** Current projection for a session: transcript plus any in-flight run overlay. */
   getProjection(sessionKey: string): SerializedProjection {
     return this.projections.serialize(sessionKey);
+  }
+
+  getToolTimeline(sessionKey: string): ToolActivity[] {
+    return [...(this.toolActivities.get(sessionKey) ?? [])];
   }
 
   async connect(): Promise<void> {
@@ -209,6 +216,7 @@ export class GatewayOpenClawClient {
           this.emit({ event: "connection.closed", payload: { reason } });
         },
         onEvent: (event) => {
+          this.ingestToolEvent({ event: event.event, payload: event.payload });
           this.ingestGatewayEvent({ event: event.event, payload: event.payload });
           this.emit({ event: event.event, payload: event.payload });
         },
@@ -228,6 +236,22 @@ export class GatewayOpenClawClient {
    * Routes Gateway chat events into the session projection. The projection is what the browser
    * renders, so streamed deltas, terminal states and durable rows all reconcile in one place.
    */
+  private ingestToolEvent(event: { event: string; payload: unknown }): void {
+    if (event.event !== "agent" || !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return;
+    const payload = event.payload as Record<string, unknown>;
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : typeof payload.session === "string" ? payload.session : "";
+    if (!sessionKey) return;
+    const current = this.toolActivities.get(sessionKey) ?? [];
+    const next = reduceToolActivity(current, payload);
+    if (next.length === current.length && next.every((item, index) => item === current[index])) return;
+    if (!this.toolActivities.has(sessionKey) && this.toolActivities.size >= MAX_TOOL_TIMELINE_SESSIONS) {
+      const oldest = this.toolActivities.keys().next().value;
+      if (oldest !== undefined) this.toolActivities.delete(oldest);
+    }
+    this.toolActivities.set(sessionKey, next);
+    this.emit({ event: "tool.timeline", payload: { sessionKey, items: next } });
+  }
+
   private ingestGatewayEvent(event: { event: string; payload: unknown }): void {
     const payload = event.payload;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;

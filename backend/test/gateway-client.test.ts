@@ -52,12 +52,17 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
   assert.equal(instances[0]?.sent.some((call) => call.method === "chat.send"), true);
 
   const projections: unknown[] = [];
+  const timelines: unknown[] = [];
   client.onEvent((event) => { if (event.event === "projection") projections.push(event.payload); });
+  client.onEvent((event) => { if (event.event === "tool.timeline") timelines.push(event.payload); });
   // Exercise the real event callback exposed to the fake Gateway.
   const fakeEvent = { event: "chat", payload: { sessionKey: key, runId: "run-mock", state: "delta", deltaText: "实时" } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0];
   instances[0]?.emit(fakeEvent);
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.ok(projections.some((item) => JSON.stringify(item).includes("实时")));
+  instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-mock", seq: 2, stream: "tool", data: { phase: "start", toolCallId: "call-mock", name: "read_file", args: { path: "README.md" } } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
+  assert.equal(client.getToolTimeline(key)[0]?.tool, "read_file");
+  assert.ok(timelines.some((item) => JSON.stringify(item).includes("call-mock")));
 
   let restored = false;
   client.onEvent((event) => { if (event.event === "connection.restored") restored = true; });

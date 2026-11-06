@@ -24,8 +24,33 @@ function optionalUrl(value: string | undefined, name: string): string | undefine
   return input;
 }
 
+function requiredSecret(value: string | undefined, name: string, minLength: number): string {
+  const input = value?.trim() ?? "";
+  if (input.length < minLength) throw new Error(`${name} must be set and at least ${minLength} characters long`);
+  return input;
+}
+
+function optionalPublicOrigin(value: string | undefined): string | undefined {
+  const input = value?.trim();
+  if (!input) return undefined;
+  let parsed: URL;
+  try { parsed = new URL(input); }
+  catch { throw new Error("WEBUI_PUBLIC_ORIGIN must be a valid origin URL"); }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== input.replace(/\/$/, "") || parsed.username || parsed.password) {
+    throw new Error("WEBUI_PUBLIC_ORIGIN must contain only an http(s) scheme, host, and optional port");
+  }
+  return parsed.origin;
+}
+
 export const config = {
   port: positivePort(process.env.PORT, 3001),
+  webui: {
+    password: requiredSecret(process.env.WEBUI_PASSWORD, "WEBUI_PASSWORD", 12),
+    sessionSecret: requiredSecret(process.env.WEBUI_SESSION_SECRET, "WEBUI_SESSION_SECRET", 32),
+    secureCookies: process.env.WEBUI_SECURE_COOKIE === "true",
+    proxySecret: process.env.WEBUI_PROXY_SECRET?.trim() ? requiredSecret(process.env.WEBUI_PROXY_SECRET, "WEBUI_PROXY_SECRET", 32) : undefined,
+    publicOrigin: optionalPublicOrigin(process.env.WEBUI_PUBLIC_ORIGIN),
+  },
   openclaw: {
     url: optionalUrl(process.env.OPENCLAW_URL, "OPENCLAW_URL"),
     token: process.env.OPENCLAW_TOKEN?.trim() || undefined,

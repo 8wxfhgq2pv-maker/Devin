@@ -8,12 +8,13 @@ export interface OpenClawStatus {
 export interface Session { key: string; title: string; updatedAt?: number; model?: string; channel?: string }
 export interface ChatMessage { id: string; role: "user" | "assistant"; content: string; timestamp?: number }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, notifyUnauthorized = true): Promise<T> {
   let res: Response;
   try { res = await fetch(path, { ...init, headers: { Accept: "application/json", ...init?.headers } }); }
   catch { throw new Error("无法连接后端，请确认本地后端服务正在运行。"); }
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (notifyUnauthorized && res.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event("auth:unauthorized"));
     const error = body && typeof body === "object" && "error" in body ? String((body as { error: unknown }).error) : `${res.status} ${res.statusText}`;
     throw new Error(error);
   }
@@ -22,6 +23,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 export const api = {
+  session: () => request<{ authenticated: boolean }>("/api/auth/session", undefined, false),
+  login: (password: string) => request<{ ok: true }>("/api/auth/login", json({ password })),
+  logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }, false),
   status: () => request<OpenClawStatus>("/api/openclaw/status"),
   connect: () => request<OpenClawStatus>("/api/openclaw/connect", { method: "POST" }),
   sessions: async () => (await request<{ sessions: Session[] }>("/api/openclaw/sessions")).sessions,

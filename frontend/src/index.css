@@ -171,3 +171,15 @@ kbd { margin-left: auto; color: #777980; font: 11px "DM Sans", sans-serif; }
 .hljs-emphasis { font-style: italic; }
 .stop-button { display: inline-flex; height: 29px; align-items: center; gap: 6px; padding: 0 11px; border: 1px solid #80533f; border-radius: 8px; background: #33231d; color: #f2a07b; cursor: pointer; font-size: 11px; font-weight: 600; }
 .stop-button:hover { background: #3d2a22; }
+
+.auth-shell { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: #101113; color: #e8e9ed; }
+.auth-shell > p { color: #aaa; font-size: 13px; }
+.auth-card { display: flex; width: min(100%, 380px); flex-direction: column; padding: 32px; border: 1px solid #303135; border-radius: 16px; background: #191a1d; box-shadow: 0 20px 60px #0005; }
+.auth-card .welcome-mark { margin: 0 0 20px; }
+.auth-card .eyebrow { margin: 0 0 5px; }
+.auth-card h1 { margin: 0 0 8px; font: 650 23px Manrope, sans-serif; }
+.auth-card .muted { margin-bottom: 24px; line-height: 1.6; }
+.auth-card label { margin-bottom: 7px; color: #c7c8cc; font-size: 12px; }
+.auth-card input { height: 42px; padding: 0 11px; border: 1px solid #414247; border-radius: 8px; background: #111214; color: #f1f1f3; }
+.auth-card .connect-button { width: 100%; margin-top: 15px; }
+.auth-error { margin: 10px 0 0; color: #f2a69c; font-size: 12px; }

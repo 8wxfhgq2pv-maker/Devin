@@ -3,6 +3,8 @@
 > 调研日期：2026-10-25。资料来源：上游仓库 [openclaw/openclaw](https://github.com/openclaw/openclaw)（commit `dd60cbc`，2026-10-24，版本 `2026.10.7`）中的 `docs/` 目录，以及官方文档站 <https://docs.openclaw.ai>。
 > 标注说明：**[已核实]** 直接来自官方文档/源码；**[推断]** 为基于资料的判断；**[待确认]** 需要用户补充。
 
+> **仓库状态更新（2026-11-04）：** 本仓库当前已实际采用方案 A：Node 后端使用 `@openclaw/gateway-client` 与 `@openclaw/gateway-protocol`，两者精确锁定为 `2026.10.10`（见 `backend/package.json`），运行时协议版本由依赖导出。后端已有 Ed25519 设备身份持久化、会话/历史、发送消息与 SSE 投影。以下旧调研中关于“当前仍是 Placeholder”“尚未选择接入方式”的文字已由本状态说明取代；协议与 Gateway 兼容性仍需按该锁定依赖进行集成测试。Gateway WebSocket 自动重连由 `GatewayClient` 自身的 retry engine 实现；业务层监听 close/restore 状态即可，不应在关闭回调中创建第二个并行客户端。
+
 ## 1. OpenClaw 是什么
 
 **[已核实]** 名为 "OpenClaw" 的公开项目至少有两个：
@@ -43,7 +45,7 @@
 - 官方 npm 包：
   - [`@openclaw/gateway-protocol`](https://www.npmjs.com/package/@openclaw/gateway-protocol)：schema、校验器、TS 类型、版本常量，附带 `protocol.schema.json`。
   - [`@openclaw/gateway-client`](https://www.npmjs.com/package/@openclaw/gateway-client)：参考客户端；包根为 Node 客户端（内置 `ws`），`@openclaw/gateway-client/browser` 为浏览器入口。
-  - 文档标注的“已验证稳定版”为 `2026.8.1`（导出 wire v4）；npm 上 `latest` 为 `2026.10.7`。官方要求客户端与 Gateway 版本**精确锁定并一起测试**；包要求 Node `>=22.19.0`。
+  - 本仓库依赖精确锁定为 `2026.10.10`，Node 要求 `>=22.19.0`。本段记录的是仓库依赖版本，不代表所有 Gateway 发布版本均已兼容；升级依赖后应与目标 Gateway 版本一起测试。
 
 ### 3.2 OpenAI 兼容 HTTP API
 
@@ -68,7 +70,7 @@
 
 ## 4. 本脚手架的接入方案候选
 
-后端 `backend/` 作为代理层，Gateway 凭据只保存在后端环境变量中，浏览器不直接接触 Gateway。抽象层位于 `backend/src/openclaw/client.ts`（`OpenClawClient` 接口，目前为 `PlaceholderOpenClawClient`，所有连接操作返回 HTTP 501）。
+后端 `backend/` 作为代理层，Gateway 凭据只保存在后端环境变量中，浏览器不直接接触 Gateway。当前代码位于 `backend/src/openclaw/client.ts`，已实现真实 `GatewayClient` 连接及 Gateway RPC；并非 Placeholder 实现。Web UI 登录与 API 防护由后端独立负责。
 
 | 方案 | 实现方式 | 优点 | 缺点 |
 | --- | --- | --- | --- |
@@ -76,12 +78,12 @@
 | B. OpenAI 兼容 HTTP | 后端调用 `/v1/chat/completions`（可 SSE 流式） | 最简单，无需配对，协议稳定通用 | 需在 Gateway 配置中开启；仅聊天/模型，无会话管理、审批、事件 |
 | C. CLI | 后端 spawn `openclaw agent` | 无需额外配置 | 不推荐：慢、无事件流、需与 Gateway 同机 |
 
-**[推断]** 建议：若只需聊天，先用方案 B 做 MVP；若要会话管理/审批/实时事件，选方案 A。最终选择需用户确认（Q4/Q5）。
+**仓库当前选择：** 采用方案 A，以支持会话管理、历史与实时事件。后续增加审批或管理能力时应按最小权限原则扩展 Gateway scopes，不应默认申请 `operator.admin`。
 
 ## 5. 安全注意事项
 
 - Gateway token/password 等同于所有者权限：只放在 `backend/.env`（已加入 `.gitignore`），不要提交，不要下发给浏览器。
-- 不要把 Gateway 端口或本 Web UI 直接暴露到公网；本 Web UI 当前**没有自身的用户鉴权**。
+- 后端要求配置 `WEBUI_PASSWORD` 与 `WEBUI_SESSION_SECRET`；服务默认仅绑定本机 loopback。远程部署必须通过 HTTPS 与可信反向代理保护，不能裸露到公网。
 - 方案 A 的设备 token 也是凭据，需要安全持久化。
 
 ## 6. 需要用户确认的问题
@@ -92,5 +94,5 @@
 4. **Q4 功能范围**：Web UI 需要哪些功能——仅聊天？会话列表/历史？实时流式输出？审批？节点/渠道/配置管理？这决定方案 A 还是 B，以及需要申请的 scopes。
 5. **Q5 接入方式**：是否接受方案 A（需要在 Gateway 主机上做一次设备配对审批），还是先用方案 B（需在 Gateway 配置中开启 `chatCompletions` 端点）？
 6. **Q6 与内置 Control UI 的区别**：OpenClaw 已自带 Web 控制台。新 UI 想解决什么内置控制台不满足的需求？（定制界面、嵌入其他系统、多用户等）
-7. **Q7 Web UI 自身的鉴权/多用户**：是否需要登录或多用户隔离？还是仅本机单人使用？
-8. **Q8 部署目标**：最终是本地开发运行，还是需要部署到服务器/容器？
+7. **Q7 Web UI 自身的鉴权/多用户**：当前按单用户密码认证实现，不含多用户隔离。
+8. **Q8 部署目标**：后端默认仅本机 loopback；如远程部署，需额外确定 TLS 反向代理与访问控制配置。

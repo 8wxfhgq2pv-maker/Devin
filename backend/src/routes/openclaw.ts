@@ -1,8 +1,8 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import type { GatewayOpenClawClient, OpenClawEvent } from "../openclaw/client.js";
 import { parseHistoryQuery, parseMessageBody, parseSessionKey } from "../validation.js";
 
-export function openclawRouter(client: GatewayOpenClawClient): Router {
+export function openclawRouter(client: GatewayOpenClawClient, isAuthenticated: (req: Request) => boolean): Router {
   const router = Router();
 
   router.get("/status", (_req, res) => res.json(client.getStatus()));
@@ -47,6 +47,7 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
     let closed = false;
     const send = (event: OpenClawEvent) => {
       if (closed) return;
+      if (!isAuthenticated(req)) { res.end(); cleanup(); return; }
       if (event.event === "projection") {
         if (!eventBelongsToSession(event.payload, sessionKey)) return;
         res.write(`event: projection\ndata: ${JSON.stringify(event.payload)}\n\n`);
@@ -57,7 +58,7 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
       }
     };
     const unsubscribe = client.onEvent(send);
-    const heartbeat = setInterval(() => { if (!closed) res.write(": keepalive\n\n"); }, 20_000);
+    const heartbeat = setInterval(() => { if (!isAuthenticated(req)) { res.end(); cleanup(); return; } if (!closed) res.write(": keepalive\n\n"); }, 20_000);
     const cleanup = () => {
       if (closed) return;
       closed = true;
@@ -65,6 +66,7 @@ export function openclawRouter(client: GatewayOpenClawClient): Router {
       unsubscribe();
     };
     req.on("close", cleanup);
+    res.on("close", cleanup);
     res.on("error", cleanup);
   });
 

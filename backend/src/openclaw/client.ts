@@ -85,8 +85,13 @@ export class GatewayOpenClawClient {
   private readonly projectionTimers = new Map<string, NodeJS.Timeout>();
   private connectPromise?: Promise<void>;
   private readonly statePath: string;
+  private reconnecting = false;
+  private shuttingDown = false;
 
-  constructor(private readonly config: OpenClawClientConfig) {
+  constructor(
+    private readonly config: OpenClawClientConfig,
+    private readonly gatewayFactory: (options: ConstructorParameters<typeof GatewayClient>[0]) => GatewayClient = (options) => new GatewayClient(options),
+  ) {
     this.statePath = config.statePath ?? join(process.cwd(), ".data", "openclaw-device.json");
     this.status = {
       state: config.url ? "disconnected" : "not_configured",
@@ -111,8 +116,11 @@ export class GatewayOpenClawClient {
 
   async connect(): Promise<void> {
     if (!this.config.url) throw new OpenClawNotImplementedError("connect");
+    this.shuttingDown = false;
     if (this.status.state === "connected") return;
+    if (this.gateway && this.reconnecting) throw new Error("Gateway 正在自动重连，请稍后重试。");
     if (this.connectPromise) return this.connectPromise;
+    if (this.gateway) { this.gateway.stop(); this.gateway = undefined; }
     this.status = { ...this.status, state: "connecting", message: "正在连接 OpenClaw Gateway…" };
     this.connectPromise = this.startGateway();
     try { await this.connectPromise; }
@@ -126,6 +134,7 @@ export class GatewayOpenClawClient {
       await writeAuthState(this.statePath, auth);
     }
     let settled = false;
+    let reconnectPaused = false;
     let timeout: NodeJS.Timeout | undefined;
     const ready = new Promise<void>((resolve, reject) => {
       const done = (error?: Error) => {
@@ -152,7 +161,7 @@ export class GatewayOpenClawClient {
         logDebug: () => {},
         logError: (message) => { if (!settled) done(new Error(message)); },
       };
-      this.gateway = new GatewayClient({
+      this.gateway = this.gatewayFactory({
         url: this.config.url,
         token: this.config.token,
         password: this.config.password,
@@ -168,6 +177,8 @@ export class GatewayOpenClawClient {
         deviceIdentity: auth.identity,
         hostDeps,
         onHelloOk: (hello) => {
+          const wasRecovering = this.reconnecting || this.status.state === "disconnected" || this.status.state === "error";
+          this.reconnecting = false;
           this.status = {
             state: "connected",
             transport: "Gateway WebSocket",
@@ -175,6 +186,7 @@ export class GatewayOpenClawClient {
             serverVersion: hello.server?.version,
             message: "已连接 OpenClaw Gateway。",
           };
+          if (wasRecovering) this.emit({ event: "connection.restored", payload: this.getStatus() });
           done();
         },
         onConnectError: (error) => {
@@ -182,7 +194,17 @@ export class GatewayOpenClawClient {
           done(error);
           this.emit({ event: "connection.error", payload: { message: error.message } });
         },
+        onReconnectPaused: (info) => {
+          reconnectPaused = true;
+          this.reconnecting = false;
+          this.status = { ...this.status, state: "error", message: info.reason || "Gateway 自动重连已暂停，请手动重试。" };
+          this.gateway = undefined;
+          done(new Error(this.status.message));
+          this.emit({ event: "connection.error", payload: { message: this.status.message } });
+        },
         onClose: (_code, reason) => {
+          if (this.shuttingDown || reconnectPaused) return;
+          this.reconnecting = true;
           this.status = { ...this.status, state: "disconnected", message: reason || "Gateway 连接已断开。" };
           this.emit({ event: "connection.closed", payload: { reason } });
         },
@@ -322,6 +344,8 @@ export class GatewayOpenClawClient {
   }
 
   async disconnect(): Promise<void> {
+    this.shuttingDown = true;
+    this.reconnecting = false;
     for (const timer of this.projectionTimers.values()) clearTimeout(timer);
     this.projectionTimers.clear();
     await this.gateway?.stopAndWait({ timeoutMs: 1000 });

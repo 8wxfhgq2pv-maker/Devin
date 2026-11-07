@@ -63,16 +63,24 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
   instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-mock", seq: 2, stream: "tool", data: { phase: "start", toolCallId: "call-mock", name: "read_file", args: { path: "README.md" } } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
   assert.equal(client.getToolTimeline(key)[0]?.tool, "read_file");
   assert.ok(timelines.some((item) => JSON.stringify(item).includes("call-mock")));
-  const emitTool = (sessionKey: string, callId: string, phase: "start" | "update" = "start") => instances[0]?.emit({
+  const emitTool = (sessionKey: string, phase = "start", stream = "tool", callId = `call-${sessionKey}`) => instances[0]?.emit({
     event: "agent",
-    payload: { sessionKey, runId: `run-${sessionKey}`, seq: callId, stream: "tool", data: { phase, toolCallId: callId, name: "tool" } },
+    payload: { sessionKey, runId: `run-${sessionKey}`, stream, data: { phase, toolCallId: callId, name: "tool" } },
   } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
-  for (let index = 0; index < 31; index++) emitTool(`agent:main:lru:${index}`, `lru-${index}`);
-  emitTool(key, "call-mock-update", "update");
-  emitTool("agent:main:lru:overflow", "lru-overflow");
+  emitTool(key, "result", "tool", "call-mock");
+  assert.equal(client.getToolTimeline(key)[0]?.status, "completed");
+  for (let index = 0; index < 31; index++) emitTool(`agent:main:lru:${index}`);
+  emitTool(key, "update", "tool", "call-mock");
+  assert.equal(client.getToolTimeline(key)[0]?.status, "completed");
+  emitTool("agent:main:lru:overflow");
   assert.ok(client.getToolTimeline(key).some((item) => item.id === "call-mock"));
   assert.deepEqual(client.getToolTimeline("agent:main:lru:0"), []);
   assert.equal(client.getToolTimeline("agent:main:lru:1").length, 1);
+  // An unknown phase does not refresh the entry's eviction order.
+  emitTool("agent:main:lru:1", "pending");
+  emitTool("agent:main:lru:overflow-2");
+  assert.deepEqual(client.getToolTimeline("agent:main:lru:1"), []);
+  assert.equal(client.getToolTimeline("agent:main:lru:2").length, 1);
 
   let restored = false;
   client.onEvent((event) => { if (event.event === "connection.restored") restored = true; });

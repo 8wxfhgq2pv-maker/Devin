@@ -32,7 +32,8 @@ function stringField(row: Record<string, unknown>, ...keys: string[]): string | 
 
 /**
  * Normalize Gateway Agent tool-stream events into an expandable timeline.
- * Only the documented `start`, `update`, and `end` phases are accepted; unknown phases are ignored.
+ * Accepts `start`, `update`, `input_delta`, and `result`; `end` is also accepted for compatibility.
+ * Unknown phases are ignored, and terminal results are not downgraded by later running events.
  */
 export function reduceToolActivity(items: readonly ToolActivity[], event: unknown, now = Date.now()): ToolActivity[] {
   if (!event || typeof event !== "object" || Array.isArray(event)) return [...items];
@@ -43,11 +44,13 @@ export function reduceToolActivity(items: readonly ToolActivity[], event: unknow
   const runId = stringField(envelope, "runId") ?? "unknown-run";
   const tool = stringField(data, "name", "toolName", "tool") ?? "Tool";
   const phase = stringField(data, "phase")?.toLowerCase();
-  if (phase !== "start" && phase !== "update" && phase !== "end") return [...items];
+  const isRunningPhase = phase === "start" || phase === "update" || phase === "input_delta";
+  const isTerminalPhase = phase === "result" || phase === "end";
+  if (!isRunningPhase && !isTerminalPhase) return [...items];
   const reportedError = data.isError === true
     || (typeof data.toolErrorSummary === "string" && data.toolErrorSummary.trim().length > 0)
     || (typeof data.error === "string" && data.error.trim().length > 0);
-  const incomingStatus: ToolActivityStatus = phase === "end" ? (reportedError ? "error" : "completed") : "running";
+  const incomingStatus: ToolActivityStatus = isTerminalPhase ? (reportedError ? "error" : "completed") : "running";
   const index = items.findIndex((item) => item.id === id);
   const previous = index >= 0 ? items[index] : undefined;
   const status = previous && previous.status !== "running" && incomingStatus === "running" ? previous.status : incomingStatus;

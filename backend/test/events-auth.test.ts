@@ -15,6 +15,7 @@ for (const invalidate of ["logout", "expiry"]) {
       getStatus: () => ({ state: "connected" }),
       getProjection: () => ({ messages: [] }),
       getToolTimeline: () => [],
+      getAgentRunTimeline: () => [],
       onEvent: (callback: OpenClawEventListener) => { listener = callback; return () => { unsubscribed = true; }; },
     } as unknown as GatewayOpenClawClient;
     const app = express();
@@ -35,6 +36,8 @@ for (const invalidate of ["logout", "expiry"]) {
     await reader.read();
     listener!({ event: "connection.restored", payload: { message: "allowed" } });
     assert.match(new TextDecoder().decode((await reader.read()).value), /allowed/);
+    listener!({ event: "agent.run.timeline", payload: { sessionKey: "test", items: [{ runId: "run-1", status: "running" }] } });
+    assert.match(new TextDecoder().decode((await reader.read()).value), /run-1/);
     if (invalidate === "logout") {
       await fetch(`${base}/api/auth/logout`, { method: "POST", headers: { cookie } });
     } else {

@@ -49,8 +49,10 @@ export function reduceAgentRunActivity(
     : previousTerminal && !incomingNonTerminal && terminalPriority(previous.status) > terminalPriority(incomingStatus)
       ? previous.status
       : previous?.status === "finishing" && incomingStatus === "running" ? "finishing" : incomingStatus;
-  const rawReason = phase === "error" ? stringValue(data, "error") : stringValue(data, "toolErrorSummary");
-  const failureReason = rawReason?.slice(0, MAX_REASON_CHARS) ?? previous?.failureReason;
+  const rawReason = phase === "error" ? stringValue(data, "error") : undefined;
+  const failureReason = status === "error"
+    ? rawReason?.slice(0, MAX_REASON_CHARS) ?? previous?.failureReason
+    : undefined;
   const startedAt = previous?.startedAt ?? (typeof data.startedAt === "number" && Number.isFinite(data.startedAt) ? data.startedAt : now);
   const nextItem: AgentRunActivity = {
     runId,

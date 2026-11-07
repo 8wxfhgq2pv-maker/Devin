@@ -19,6 +19,15 @@ test("run lifecycle progresses through start, finishing, and end", () => {
   assert.equal(completed[0]?.stopReason, "stop");
 });
 
+test("successful runs do not expose tool error summaries as run failures", () => {
+  const completed = reduceAgentRunActivity([], {
+    runId: "run-success", stream: "lifecycle",
+    data: { phase: "end", stopReason: "stop", toolErrorSummary: "A tool failed before retry succeeded" },
+  }, 200);
+  assert.equal(completed[0]?.status, "completed");
+  assert.equal(completed[0]?.failureReason, undefined);
+});
+
 test("run errors expose bounded safe reason and cannot be downgraded by late start", () => {
   const failed = reduceAgentRunActivity([], {
     runId: "run-2", stream: "lifecycle", data: { phase: "error", error: "Provider timed out", timeoutPhase: "provider" },

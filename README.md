@@ -11,6 +11,7 @@
 - 后端持有 Gateway 凭据；浏览器不直接接触 Gateway token
 - 后端保存设备身份和 Gateway 签发的设备 token，后续连接可复用配对
 - Agent 工具执行时间线：实时展示工具调用状态，并可展开查看输入/输出详情
+- Agent 运行状态：展示运行中、收尾、完成、失败或中止，并呈现 Gateway 提供的安全失败原因
 
 ## 启动
 
@@ -64,8 +65,8 @@ npm run dev
 - `GET /api/openclaw/history?sessionKey=...` — 会话历史
 - `POST /api/openclaw/messages` — 发送消息
 - `POST /api/openclaw/abort` — 中止当前会话正在生成的回复
-- `GET /api/openclaw/events?sessionKey=...` — SSE 事件流：`projection` 为权威会话视图（后端用官方投影 reducer 维护），`connection.*` 为连接状态
+- `GET /api/openclaw/events?sessionKey=...` — SSE 事件流：`projection` 为权威会话视图（后端用官方投影 reducer 维护），`connection.*` 为连接状态，`agent.run.timeline` 为当前会话运行摘要，`tool.timeline` 为工具调用状态
 
 构建、类型检查、Lint 和测试：`npm run build`、`npm run typecheck`、`npm run lint`、`npm test`。GitHub Actions 会在每次 push 和 PR 时跑这四项。
 
-工具时间线目前消费 Gateway 的 `agent` 事件中 `stream: "tool"` 数据，按工具调用 ID 合并开始/结果事件；每个会话保留最近 50 项，详情最多 12,000 字符。数据仅保存在后端内存中，不会作为长期审计日志持久化；重启后历史工具调用不会恢复。
+工具时间线消费 Gateway `agent` 事件中 `stream: "tool"` 数据，按工具调用 ID 合并开始/结果事件；每个会话保留最近 50 项，详情最多 12,000 字符。Agent 运行状态消费 `stream: "lifecycle"`，每个会话保留最近 10 次运行；状态与失败摘要仅保存在后端内存中，不会作为长期审计日志持久化，重启后不会恢复。

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { GatewayClient, type DeviceIdentity, type GatewayClientHostDeps } from "@openclaw/gateway-client";
 import { PROTOCOL_VERSION } from "@openclaw/gateway-protocol/version";
 import { SessionProjectionStore, type ProjectionMessage, type SerializedProjection } from "./projection.js";
+import { reduceAgentRunActivity, type AgentRunActivity } from "./run-status.js";
 import { reduceToolActivity, type ToolActivity } from "./tool-timeline.js";
 
 export type OpenClawConnectionState = "not_configured" | "disconnected" | "connecting" | "connected" | "error";
@@ -85,6 +86,7 @@ export class GatewayOpenClawClient {
   private readonly listeners = new Set<OpenClawEventListener>();
   private readonly projections = new SessionProjectionStore();
   private readonly toolActivities = new Map<string, ToolActivity[]>();
+  private readonly agentRunActivities = new Map<string, AgentRunActivity[]>();
   private readonly projectionTimers = new Map<string, NodeJS.Timeout>();
   private connectPromise?: Promise<void>;
   private readonly statePath: string;
@@ -119,6 +121,11 @@ export class GatewayOpenClawClient {
 
   getToolTimeline(sessionKey: string): ToolActivity[] {
     return [...(this.toolActivities.get(sessionKey) ?? [])];
+  }
+
+  /** Returns the recent in-memory Agent run lifecycle summaries for one session. */
+  getAgentRunTimeline(sessionKey: string): AgentRunActivity[] {
+    return [...(this.agentRunActivities.get(sessionKey) ?? [])];
   }
 
   async connect(): Promise<void> {
@@ -216,6 +223,7 @@ export class GatewayOpenClawClient {
           this.emit({ event: "connection.closed", payload: { reason } });
         },
         onEvent: (event) => {
+          this.ingestAgentRunEvent({ event: event.event, payload: event.payload });
           this.ingestToolEvent({ event: event.event, payload: event.payload });
           this.ingestGatewayEvent({ event: event.event, payload: event.payload });
           this.emit({ event: event.event, payload: event.payload });
@@ -232,10 +240,26 @@ export class GatewayOpenClawClient {
     }
   }
 
-  /**
-   * Routes Gateway chat events into the session projection. The projection is what the browser
-   * renders, so streamed deltas, terminal states and durable rows all reconcile in one place.
-   */
+  /** Aggregates Gateway lifecycle frames and publishes run progress for the matching session. */
+  private ingestAgentRunEvent(event: { event: string; payload: unknown }): void {
+    if (event.event !== "agent" || !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return;
+    const payload = event.payload as Record<string, unknown>;
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : typeof payload.session === "string" ? payload.session : "";
+    if (!sessionKey) return;
+    const current = this.agentRunActivities.get(sessionKey) ?? [];
+    const next = reduceAgentRunActivity(current, payload);
+    if (next.length === current.length && next.every((item, index) => item === current[index])) return;
+    const existingSession = this.agentRunActivities.has(sessionKey);
+    if (!existingSession && this.agentRunActivities.size >= MAX_TOOL_TIMELINE_SESSIONS) {
+      const oldest = this.agentRunActivities.keys().next().value;
+      if (oldest !== undefined) this.agentRunActivities.delete(oldest);
+    }
+    if (existingSession) this.agentRunActivities.delete(sessionKey);
+    this.agentRunActivities.set(sessionKey, next);
+    this.emit({ event: "agent.run.timeline", payload: { sessionKey, items: next } });
+  }
+
+  /** Aggregates Gateway Agent tool events into the session execution timeline. */
   private ingestToolEvent(event: { event: string; payload: unknown }): void {
     if (event.event !== "agent" || !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return;
     const payload = event.payload as Record<string, unknown>;

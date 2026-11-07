@@ -7,6 +7,15 @@ export interface OpenClawStatus {
 }
 export interface Session { key: string; title: string; updatedAt?: number; model?: string; channel?: string }
 export interface ChatMessage { id: string; role: "user" | "assistant"; content: string; timestamp?: number }
+export interface AgentRunActivity {
+  runId: string;
+  status: "running" | "finishing" | "completed" | "error" | "aborted";
+  startedAt: number;
+  updatedAt: number;
+  failureReason?: string;
+  stopReason?: string;
+  timeoutPhase?: string;
+}
 
 async function request<T>(path: string, init?: RequestInit, notifyUnauthorized = true): Promise<T> {
   let res: Response;

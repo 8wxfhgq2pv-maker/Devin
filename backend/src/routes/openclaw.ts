@@ -45,6 +45,7 @@ export function openclawRouter(client: GatewayOpenClawClient, isAuthenticated: (
     res.write(`event: ready\ndata: ${JSON.stringify({ connected: client.getStatus().state === "connected" })}\n\n`);
     res.write(`event: projection\ndata: ${JSON.stringify({ sessionKey, ...client.getProjection(sessionKey) })}\n\n`);
     res.write(`event: tool.timeline\ndata: ${JSON.stringify({ sessionKey, items: client.getToolTimeline(sessionKey) })}\n\n`);
+    res.write(`event: agent.run.timeline\ndata: ${JSON.stringify({ sessionKey, items: client.getAgentRunTimeline(sessionKey) })}\n\n`);
     let closed = false;
     const send = (event: OpenClawEvent) => {
       if (closed) return;
@@ -57,6 +58,11 @@ export function openclawRouter(client: GatewayOpenClawClient, isAuthenticated: (
       if (event.event === "tool.timeline") {
         if (!eventBelongsToSession(event.payload, sessionKey)) return;
         res.write(`event: tool.timeline\ndata: ${JSON.stringify(event.payload)}\n\n`);
+        return;
+      }
+      if (event.event === "agent.run.timeline") {
+        if (!eventBelongsToSession(event.payload, sessionKey)) return;
+        res.write(`event: agent.run.timeline\ndata: ${JSON.stringify(event.payload)}\n\n`);
         return;
       }
       if (event.event.startsWith("connection.")) {

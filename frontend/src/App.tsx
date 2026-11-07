@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, type AgentRunActivity, type ChatMessage, type OpenClawStatus, type Session } from "./api";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { getRunStatusAnnouncement } from "./run-announcement";
 
 type DisplayMessage = ChatMessage & { pending?: boolean };
 type ToolActivity = { id: string; runId: string; tool: string; status: "running" | "completed" | "error"; startedAt: number; updatedAt: number; input?: string; output?: string };
@@ -47,6 +48,7 @@ export default function App() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const [agentRuns, setAgentRuns] = useState<AgentRunActivity[]>([]);
+  const [runAnnouncement, setRunAnnouncement] = useState("");
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -60,6 +62,7 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement | null>(null);
   const streamingRef = useRef(false);
   const activeKeyRef = useRef(activeKey);
+  const previousAgentRunsRef = useRef<AgentRunActivity[] | null>(null);
   const active = sessions.find((session) => session.key === activeKey);
   const filtered = useMemo(() => sessions.filter((session) => session.title.toLowerCase().includes(query.toLowerCase())), [sessions, query]);
   // A disconnected Gateway has no transcript to show, so the previous session's messages must not
@@ -154,6 +157,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setToolActivities([]);
     setAgentRuns([]);
+    setRunAnnouncement("");
+    previousAgentRunsRef.current = null;
   }, [activeKey]);
   useEffect(() => { if (status?.state === "connected") void loadSessions(); }, [status?.state, loadSessions]);
   useEffect(() => { if (activeKey && status?.state === "connected") void loadHistory(activeKey); }, [activeKey, status?.state, loadHistory]);
@@ -188,7 +193,12 @@ export default function App() {
     source.addEventListener("agent.run.timeline", (event) => {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as { sessionKey?: string; items?: AgentRunActivity[] };
-        if (payload.sessionKey === activeKey && Array.isArray(payload.items)) setAgentRuns(payload.items);
+        if (payload.sessionKey === activeKey && Array.isArray(payload.items)) {
+          const announcement = getRunStatusAnnouncement(previousAgentRunsRef.current, payload.items);
+          previousAgentRunsRef.current = payload.items;
+          if (announcement) setRunAnnouncement(announcement);
+          setAgentRuns(payload.items);
+        }
       } catch { /* Ignore malformed run lifecycle events. */ }
     });
     source.addEventListener("ready", (event) => {
@@ -329,6 +339,7 @@ export default function App() {
       </aside>
 
       <section className="chat-panel">
+        <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{runAnnouncement}</div>
         <header className="topbar"><div className="topbar-left"><button className="icon-button menu-button" aria-label="打开导航" onClick={() => setSidebarOpen(true)}>☰</button><span className="mobile-brand"><span className="brand-mark">✳</span> openclaw</span><span className="topbar-divider" /><span className="model-label"><span className="model-dot" /> {active?.model ?? "OpenClaw"} <span className="chevron">⌄</span></span></div><div className="topbar-right"><span className="demo-pill"><span className={`connection-dot ${status?.state === "connected" ? "connected" : ""}`} />{status?.state === "connected" ? "已连接" : "未连接"}</span><button className="icon-button" aria-label="刷新会话" onClick={() => void loadSessions(true)}>↻</button></div></header>
         <div className="conversation-heading"><div><p className="eyebrow">{active?.channel ?? "OPENCLAW SESSION"}</p><h1>{active?.title ?? "新对话"}</h1></div><span className="session-key" title={activeKey}>{activeKey}</span></div>
         <div className="messages" aria-live="polite">

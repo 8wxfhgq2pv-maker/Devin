@@ -52,12 +52,34 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
   assert.equal(instances[0]?.sent.some((call) => call.method === "chat.send"), true);
 
   const projections: unknown[] = [];
+  const timelines: unknown[] = [];
   client.onEvent((event) => { if (event.event === "projection") projections.push(event.payload); });
+  client.onEvent((event) => { if (event.event === "tool.timeline") timelines.push(event.payload); });
   // Exercise the real event callback exposed to the fake Gateway.
   const fakeEvent = { event: "chat", payload: { sessionKey: key, runId: "run-mock", state: "delta", deltaText: "实时" } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0];
   instances[0]?.emit(fakeEvent);
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.ok(projections.some((item) => JSON.stringify(item).includes("实时")));
+  instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-mock", seq: 2, stream: "tool", data: { phase: "start", toolCallId: "call-mock", name: "read_file", args: { path: "README.md" } } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
+  assert.equal(client.getToolTimeline(key)[0]?.tool, "read_file");
+  assert.ok(timelines.some((item) => JSON.stringify(item).includes("call-mock")));
+
+  const emitTool = (sessionKey: string, phase = "start", stream = "tool") => {
+    instances[0]!.emit({ event: "agent", payload: { sessionKey, stream, data: { phase, toolCallId: "call" } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
+  };
+  // Fill the cache, then refresh its oldest entry while at capacity.
+  for (let index = 1; index < 32; index++) emitTool(`session-${index}`);
+  emitTool(key, "result");
+  for (let index = 1; index < 32; index++) assert.equal(client.getToolTimeline(`session-${index}`).length, 1);
+  assert.equal(client.getToolTimeline(key).length, 2);
+  // An ignored event must not refresh eviction order.
+  emitTool("session-1", "start", "assistant");
+  emitTool("session-32");
+  assert.equal(client.getToolTimeline("session-1").length, 0);
+  assert.equal(client.getToolTimeline(key).length, 2);
+  emitTool("session-33");
+  assert.equal(client.getToolTimeline("session-2").length, 0);
+  assert.equal(client.getToolTimeline("session-3").length, 1);
 
   let restored = false;
   client.onEvent((event) => { if (event.event === "connection.restored") restored = true; });

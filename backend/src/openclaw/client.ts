@@ -117,6 +117,7 @@ export class GatewayOpenClawClient {
     return this.projections.serialize(sessionKey);
   }
 
+  /** Returns the bounded in-memory tool execution timeline for one session. */
   getToolTimeline(sessionKey: string): ToolActivity[] {
     return [...(this.toolActivities.get(sessionKey) ?? [])];
   }
@@ -232,10 +233,7 @@ export class GatewayOpenClawClient {
     }
   }
 
-  /**
-   * Routes Gateway chat events into the session projection. The projection is what the browser
-   * renders, so streamed deltas, terminal states and durable rows all reconcile in one place.
-   */
+  /** Aggregates a Gateway Agent tool-stream event and publishes the updated session timeline. */
   private ingestToolEvent(event: { event: string; payload: unknown }): void {
     if (event.event !== "agent" || !event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return;
     const payload = event.payload as Record<string, unknown>;
@@ -244,14 +242,17 @@ export class GatewayOpenClawClient {
     const current = this.toolActivities.get(sessionKey) ?? [];
     const next = reduceToolActivity(current, payload);
     if (next.length === current.length && next.every((item, index) => item === current[index])) return;
-    if (!this.toolActivities.has(sessionKey) && this.toolActivities.size >= MAX_TOOL_TIMELINE_SESSIONS) {
+    const existingSession = this.toolActivities.has(sessionKey);
+    if (!existingSession && this.toolActivities.size >= MAX_TOOL_TIMELINE_SESSIONS) {
       const oldest = this.toolActivities.keys().next().value;
       if (oldest !== undefined) this.toolActivities.delete(oldest);
     }
+    if (existingSession) this.toolActivities.delete(sessionKey);
     this.toolActivities.set(sessionKey, next);
     this.emit({ event: "tool.timeline", payload: { sessionKey, items: next } });
   }
 
+  /** Routes Gateway chat run events into the durable transcript projection shown by the browser. */
   private ingestGatewayEvent(event: { event: string; payload: unknown }): void {
     const payload = event.payload;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;

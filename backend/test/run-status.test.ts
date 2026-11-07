@@ -28,6 +28,21 @@ test("successful runs do not expose tool error summaries as run failures", () =>
   assert.equal(completed[0]?.failureReason, undefined);
 });
 
+test("a tool error summary during finishing is cleared by successful completion", () => {
+  const finishing = reduceAgentRunActivity([], {
+    runId: "run-finishing", stream: "lifecycle",
+    data: { phase: "finishing", toolErrorSummary: "A retried tool failed once" },
+  }, 100);
+  assert.equal(finishing[0]?.status, "finishing");
+  assert.equal(finishing[0]?.failureReason, undefined);
+
+  const completed = reduceAgentRunActivity(finishing, {
+    runId: "run-finishing", stream: "lifecycle", data: { phase: "end", stopReason: "stop" },
+  }, 200);
+  assert.equal(completed[0]?.status, "completed");
+  assert.equal(completed[0]?.failureReason, undefined);
+});
+
 test("run errors expose bounded safe reason and cannot be downgraded by late start", () => {
   const failed = reduceAgentRunActivity([], {
     runId: "run-2", stream: "lifecycle", data: { phase: "error", error: "Provider timed out", timeoutPhase: "provider" },
@@ -45,6 +60,7 @@ test("run errors expose bounded safe reason and cannot be downgraded by late sta
     runId: "run-2", stream: "lifecycle", data: { phase: "end", stopReason: "stop" },
   }, 450);
   assert.equal(lateSuccess[0]?.status, "error");
+  assert.equal(lateSuccess[0]?.failureReason, "Provider timed out");
 });
 
 test("abort is distinct from success and unknown lifecycle phases are ignored", () => {
@@ -65,4 +81,25 @@ test("run summaries are bounded to the most recent ten runs", () => {
   assert.equal(runs.length, 10);
   assert.equal(runs[0]?.runId, "run-2");
   assert.equal(runs.at(-1)?.runId, "run-11");
+});
+
+test("run identifiers are rejected and metadata fields are bounded", () => {
+  const oversizedId = reduceAgentRunActivity([], {
+    runId: "r".repeat(201), stream: "lifecycle", data: { phase: "start" },
+  }, 100);
+  assert.deepEqual(oversizedId, []);
+
+  const bounded = reduceAgentRunActivity([], {
+    runId: "run-bounded", stream: "lifecycle",
+    data: {
+      phase: "error",
+      error: "e".repeat(900),
+      stopReason: "s".repeat(250),
+      timeoutPhase: "t".repeat(250),
+    },
+  }, 200);
+  assert.equal(bounded[0]?.runId, "run-bounded");
+  assert.equal(bounded[0]?.failureReason?.length, 800);
+  assert.equal(bounded[0]?.stopReason?.length, 200);
+  assert.equal(bounded[0]?.timeoutPhase?.length, 200);
 });

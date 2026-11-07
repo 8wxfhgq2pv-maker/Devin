@@ -13,6 +13,8 @@ export interface AgentRunActivity {
 
 const MAX_RUNS = 10;
 const MAX_REASON_CHARS = 800;
+const MAX_RUN_ID_CHARS = 200;
+const MAX_METADATA_CHARS = 200;
 
 /** Reads a non-empty string from the Gateway lifecycle payload. */
 function stringValue(row: Record<string, unknown>, key: string): string | undefined {
@@ -30,12 +32,12 @@ export function reduceAgentRunActivity(
   const envelope = event as Record<string, unknown>;
   if (envelope.stream !== "lifecycle" || !envelope.data || typeof envelope.data !== "object" || Array.isArray(envelope.data)) return [...items];
   const runId = stringValue(envelope, "runId");
-  if (!runId) return [...items];
+  if (!runId || runId.length > MAX_RUN_ID_CHARS) return [...items];
   const data = envelope.data as Record<string, unknown>;
   const phase = stringValue(data, "phase")?.toLowerCase();
   if (phase !== "start" && phase !== "finishing" && phase !== "end" && phase !== "error") return [...items];
 
-  const stopReason = stringValue(data, "stopReason");
+  const stopReason = stringValue(data, "stopReason")?.slice(0, MAX_METADATA_CHARS);
   const incomingStatus: AgentRunStatus = phase === "start" ? "running"
     : phase === "finishing" ? "finishing"
       : phase === "error" ? "error"
@@ -53,6 +55,7 @@ export function reduceAgentRunActivity(
   const failureReason = status === "error"
     ? rawReason?.slice(0, MAX_REASON_CHARS) ?? previous?.failureReason
     : undefined;
+  const timeoutPhase = stringValue(data, "timeoutPhase")?.slice(0, MAX_METADATA_CHARS) ?? previous?.timeoutPhase;
   const startedAt = previous?.startedAt ?? (typeof data.startedAt === "number" && Number.isFinite(data.startedAt) ? data.startedAt : now);
   const nextItem: AgentRunActivity = {
     runId,
@@ -61,7 +64,7 @@ export function reduceAgentRunActivity(
     updatedAt: now,
     ...(failureReason ? { failureReason } : {}),
     ...(stopReason ?? previous?.stopReason ? { stopReason: stopReason ?? previous?.stopReason } : {}),
-    ...(stringValue(data, "timeoutPhase") ?? previous?.timeoutPhase ? { timeoutPhase: stringValue(data, "timeoutPhase") ?? previous?.timeoutPhase } : {}),
+    ...(timeoutPhase ? { timeoutPhase } : {}),
   };
   const next = [...items];
   if (index >= 0) next[index] = nextItem;

@@ -20,6 +20,7 @@ test("only meaningful status changes are announced", () => {
   assert.equal(getRunStatusAnnouncement(previous, [run("run-12345678", "finishing", 120)]), "Agent 12345678 正在收尾");
   assert.equal(getRunStatusAnnouncement(previous, [run("run-12345678", "completed", 130)]), "Agent 12345678 已完成");
   assert.equal(getRunStatusAnnouncement(previous, [run("run-12345678", "error", 140)]), "Agent 12345678 运行失败");
+  assert.equal(getRunStatusAnnouncement(previous, [run("run-12345678", "aborted", 150)]), "Agent 12345678 已中止");
 });
 
 test("one update announces only the most recently updated run", () => {

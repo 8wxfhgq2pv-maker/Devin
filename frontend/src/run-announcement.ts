@@ -1,6 +1,6 @@
 import type { AgentRunActivity } from "./api";
 
-const announcedStatuses = new Set<AgentRunActivity["status"]>(["finishing", "completed", "error"]);
+const announcedStatuses = new Set<AgentRunActivity["status"]>(["finishing", "completed", "error", "aborted"]);
 const statusLabels: Record<AgentRunActivity["status"], string> = {
   running: "运行中",
   finishing: "正在收尾",

@@ -248,6 +248,7 @@ export class GatewayOpenClawClient {
       const oldest = this.toolActivities.keys().next().value;
       if (oldest !== undefined) this.toolActivities.delete(oldest);
     }
+    this.toolActivities.delete(sessionKey);
     this.toolActivities.set(sessionKey, next);
     this.emit({ event: "tool.timeline", payload: { sessionKey, items: next } });
   }

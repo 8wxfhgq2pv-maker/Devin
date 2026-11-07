@@ -35,7 +35,9 @@ export function reduceToolActivity(items: readonly ToolActivity[], event: unknow
   const runId = stringField(envelope, "runId") ?? "unknown-run";
   const tool = stringField(data, "name", "toolName", "tool") ?? "Tool";
   const phase = (stringField(data, "phase", "status") ?? "").toLowerCase();
-  const status: ToolActivityStatus = /error|fail/.test(phase) ? "error" : /end|result|complete|finish|success/.test(phase) ? "completed" : "running";
+  // Gateway emits start/update/result; failed results carry isError.
+  const status: ToolActivityStatus = /^(error|fail|failed|failure)$/.test(phase) || (phase === "result" && data.isError === true)
+    ? "error" : /^(end|result|complete|completed|finish|finished|success)$/.test(phase) ? "completed" : "running";
   const index = items.findIndex((item) => item.id === id);
   const previous = index >= 0 ? items[index] : undefined;
   const input = text(data.args ?? data.arguments ?? data.input ?? data.params);
@@ -44,7 +46,7 @@ export function reduceToolActivity(items: readonly ToolActivity[], event: unknow
     id,
     runId,
     tool: stringField(data, "name", "toolName", "tool") ?? previous?.tool ?? tool,
-    status,
+    status: status === "running" && previous && previous.status !== "running" ? previous.status : status,
     startedAt: previous?.startedAt ?? now,
     updatedAt: now,
     ...(input ?? previous?.input ? { input: input ?? previous?.input } : {}),

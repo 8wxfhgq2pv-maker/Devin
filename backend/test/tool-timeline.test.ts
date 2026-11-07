@@ -40,3 +40,31 @@ test("timeline caps retained events and detail size", () => {
   assert.equal(items[0]?.id, "call-5");
   assert.equal(items[0]?.input?.length, 12_000);
 });
+
+
+test("only exact terminal phases complete a tool activity", () => {
+  for (const phase of ["start", "update", "partial_result", "pending", "incomplete", "error_pending"]) {
+    const items = reduceToolActivity([], { stream: "tool", data: { id: "call", phase } }, 100);
+    assert.equal(items[0]?.status, "running", phase);
+  }
+  const failed = reduceToolActivity([], {
+    stream: "tool", data: { id: "call", phase: "result", isError: true, result: "failed" },
+  }, 100);
+  assert.equal(failed[0]?.status, "error");
+});
+
+test("late running events preserve terminal status and still merge details", () => {
+  for (const phase of ["result", "error"]) {
+    const terminal = reduceToolActivity([], { stream: "tool", data: { id: "call", phase } }, 100);
+    for (const latePhase of ["start", "update", "partial_result", "pending"]) {
+      const updated = reduceToolActivity(terminal, {
+        stream: "tool", data: { id: "call", phase: latePhase, output: "late detail" },
+      }, 200);
+      assert.equal(updated.length, 1);
+      assert.equal(updated[0]?.status, terminal[0]?.status);
+      assert.equal(updated[0]?.startedAt, 100);
+      assert.equal(updated[0]?.updatedAt, 200);
+      assert.equal(updated[0]?.output, "late detail");
+    }
+  }
+});

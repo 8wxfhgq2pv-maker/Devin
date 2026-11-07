@@ -63,6 +63,14 @@ test("Gateway mock covers connect, history, send, event projection, and reconnec
   instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-mock", seq: 2, stream: "tool", data: { phase: "start", toolCallId: "call-mock", name: "read_file", args: { path: "README.md" } } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
   assert.equal(client.getToolTimeline(key)[0]?.tool, "read_file");
   assert.ok(timelines.some((item) => JSON.stringify(item).includes("call-mock")));
+  const runTimelines: unknown[] = [];
+  client.onEvent((event) => { if (event.event === "agent.run.timeline") runTimelines.push(event.payload); });
+  instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-status", stream: "lifecycle", data: { phase: "start", startedAt: 100 } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
+  instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-status", stream: "lifecycle", data: { phase: "finishing" } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
+  instances[0]?.emit({ event: "agent", payload: { sessionKey: key, runId: "run-status", stream: "lifecycle", data: { phase: "error", error: "Provider timed out" } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
+  assert.equal(client.getAgentRunTimeline(key)[0]?.status, "error");
+  assert.equal(client.getAgentRunTimeline(key)[0]?.failureReason, "Provider timed out");
+  assert.ok(runTimelines.some((item) => JSON.stringify(item).includes("run-status")));
 
   const emitTool = (sessionKey: string, phase = "start", stream = "tool") => {
     instances[0]!.emit({ event: "agent", payload: { sessionKey, stream, data: { phase, toolCallId: "call" } } } as Parameters<NonNullable<ConstructorParameters<typeof GatewayClient>[0]["onEvent"]>>[0]);
